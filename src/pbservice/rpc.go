@@ -29,7 +29,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	seq := args.Seq
 	if lastSeq, ok := pb.lastClientSeq[client]; ok {
 		if seq < lastSeq {
-			panic(fmt.Sprintf("client %d seq out of order %d vs %d", client, seq, lastSeq))
+			panic(fmt.Sprintf("Get client %d seq out of order %d vs %d", client, seq, lastSeq))
 		}
 		if seq == lastSeq {
 			value := pb.lastClientResult[client]
@@ -88,7 +88,7 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	}
 	if lastSeq, ok := pb.lastClientSeq[client]; ok {
 		if seq < lastSeq {
-			panic(fmt.Sprintf("client %d seq out of order %d vs %d", client, seq, lastSeq))
+			panic(fmt.Sprintf("Put client %d seq out of order %d vs %d", client, seq, lastSeq))
 		}
 		if seq == lastSeq {
 			value := pb.lastClientResult[client]
@@ -157,7 +157,7 @@ func (pb *PBServer) Forward(args *SyncArgs, reply *SyncReply) error {
 		}
 		if lastSeq, ok := pb.lastClientSeq[client]; ok {
 			if seq < lastSeq {
-				panic(fmt.Sprintf("client %d seq out of order %d vs %d", client, seq, lastSeq))
+				panic(fmt.Sprintf("Forward client %d seq out of order %d vs %d", client, seq, lastSeq))
 			}
 			if seq == lastSeq {
 				reply.Err = OK

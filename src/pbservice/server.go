@@ -17,7 +17,7 @@ import (
 )
 
 // Debugging
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -53,13 +53,26 @@ func (pb *PBServer) forwardToBackup(args *SyncArgs) bool {
 	if pb.backup == "" {
 		return true
 	}
-	reply := SyncReply{}
-	prefix := fmt.Sprintf("syncToBackup %v is primary %t sync to backup %s with %v", pb.me, pb.isPrimary(), pb.backup, *args)
-	DPrintf("%s", prefix)
-	ret := call(pb.backup, "PBServer.Forward", args, &reply)
-	DPrintf("%s, return with %t, %v", prefix, ret, reply)
-	if ret && reply.Err == ErrWrongView {
-		return false
+	for !pb.killed() {
+		reply := SyncReply{}
+		prefix := fmt.Sprintf("syncToBackup %v is primary %t sync to backup %s with %v", pb.me, pb.isPrimary(), pb.backup, *args)
+		DPrintf("%s", prefix)
+		ret := call(pb.backup, "PBServer.Forward", args, &reply)
+		if ret && reply.Err == ErrWrongView {
+			DPrintf("%s fail with view not match %v", prefix, reply)
+			return false
+		}
+		if ret && reply.Err == OK {
+			DPrintf("%s sync done", prefix)
+			break
+		}
+		view, rc := pb.vs.Get()
+		if rc && view.Backup != pb.backup {
+			DPrintf("%s view changed %v vs [%d, %s, %s]", prefix, view, pb.viewNum, pb.primary, pb.backup)
+			break
+		}
+		DPrintf("%s will retry", prefix)
+		time.Sleep(viewservice.PingInterval)
 	}
 	return true
 }
