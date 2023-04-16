@@ -1,6 +1,6 @@
 package pbservice
 
-import "viewservice"
+import "6.824.2014/viewservice"
 import "fmt"
 import "io"
 import "net"
