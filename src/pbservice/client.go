@@ -2,7 +2,6 @@ package pbservice
 
 import (
 	"crypto/rand"
-	"fmt"
 	"math/big"
 	"net/rpc"
 	"time"
@@ -69,7 +68,7 @@ func call(srv string, rpcname string, args interface{}, reply interface{}) bool 
 		return true
 	}
 
-	fmt.Println(err)
+	DPrintf("rpc error %s, %s, %v", srv, rpcname, err)
 	return false
 }
 
@@ -88,12 +87,11 @@ func (ck *Clerk) Get(key string) string {
 	}
 	reply := GetReply{}
 	for {
-		DPrintf("get %v, %v\n", ck.primary, ck.me)
 		if ck.primary != "" {
 			for {
-				DPrintf("call rpc get %v, %v\n", ck.primary, ck.me)
+				DPrintf("client %d Get, call %s with %v", ck.me, ck.primary, args)
 				ret := call(ck.primary, "PBServer.Get", &args, &reply)
-				DPrintf("after call rpc get %v, %v, %v\n", ck.primary, ck.me, ret)
+				DPrintf("client %d Get, call %s with %v, return %t, %v", ck.me, ck.primary, args, ret, reply)
 				if !ret {
 					break
 				}
@@ -108,14 +106,7 @@ func (ck *Clerk) Get(key string) string {
 				}
 			}
 		}
-		view, err := ck.vs.Get()
-		if !err {
-			DPrintf("get view error %v\n", err)
-		} else {
-			ck.viewNum = view.Viewnum
-			ck.primary = view.Primary
-			ck.backup = view.Backup
-		}
+		ck.updateView()
 		time.Sleep(viewservice.PingInterval)
 	}
 }
@@ -134,12 +125,11 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 	}
 	reply := PutReply{}
 	for {
-		DPrintf("putext %v, %v\n", ck.primary, ck.me)
 		if ck.primary != "" {
 			for {
-				DPrintf("call rpc %v, %v\n", ck.primary, ck.me)
+				DPrintf("client %d PutExt, call %s with %v", ck.me, ck.primary, args)
 				ret := call(ck.primary, "PBServer.Put", &args, &reply)
-				DPrintf("after call rpc %v, %v\n", ck.primary, ck.me)
+				DPrintf("client %d PutExt, call %s with %v, return %t, %v", ck.me, ck.primary, args, ret, reply)
 				if !ret {
 					break
 				}
@@ -151,16 +141,20 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 				}
 			}
 		}
-		view, err := ck.vs.Get()
-		if !err {
-			DPrintf("get view error %v\n", err)
-		} else {
-			DPrintf("PutExt get new view: %v\n", view)
-			ck.viewNum = view.Viewnum
-			ck.primary = view.Primary
-			ck.backup = view.Backup
-		}
+		ck.updateView()
 		time.Sleep(viewservice.PingInterval)
+	}
+}
+
+func (ck *Clerk) updateView() {
+	view, err := ck.vs.Get()
+	if !err {
+		DPrintf("client %d get view error %v", ck.me, err)
+	} else {
+		DPrintf("client %d get new view: %v vs [%d, %s, %s]", ck.me, view, ck.viewNum, ck.primary, ck.backup)
+		ck.viewNum = view.Viewnum
+		ck.primary = view.Primary
+		ck.backup = view.Backup
 	}
 }
 

@@ -17,14 +17,12 @@ import (
 	"6.824.2014/viewservice"
 )
 
-//import "strconv"
-
 // Debugging
 const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
-		n, err = fmt.Printf(format, a...)
+		log.Printf(format, a...)
 	}
 	return
 }
@@ -53,52 +51,41 @@ func (pb *PBServer) isPrimary() bool {
 }
 
 func (pb *PBServer) forwardToBackup(args *SyncArgs) bool {
-	// pb.mu.Lock()
-	// defer pb.mu.Unlock()
-	// DPrintf("xxxxxxxxxxxxxxxxxxxx %v\n", pb.backup)
 	if pb.backup == "" {
 		return true
 	}
-	// DPrintf("yyyyyyyyyyyyyyyyyyy\n")
-	for !pb.killed() {
-		// DPrintf("zzzzzzzzzzzzzzzzz\n")
-		reply := SyncReply{}
-		DPrintf("111111111 syncToBackup %v, %v, %v\n", pb.backup, pb.me, *args)
-		ret := call(pb.backup, "PBServer.Forward", args, &reply)
-		DPrintf("111111111 after syncToBackup %v, %v, %v\n", pb.backup, pb.me, ret)
-		if ret {
-			if reply.Err == OK {
-				return true
-			}
-			if reply.Err == ErrWrongView {
-				break
-			}
-		}
+	reply := SyncReply{}
+	prefix := fmt.Sprintf("syncToBackup %v is primary %t sync to backup %s with %v", pb.me, pb.isPrimary(), pb.backup, *args)
+	DPrintf("%s", prefix)
+	ret := call(pb.backup, "PBServer.Forward", args, &reply)
+	DPrintf("%s, return with %t, %v", prefix, ret, reply)
+	if ret && reply.Err == ErrWrongView {
+		return false
 	}
-	return false
+	return true
 }
 
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	// Your code here.
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
-	DPrintf("put handler %v, %v, %v\n", *args, pb.me, pb.primary)
+	prefix := fmt.Sprintf("put handler me %s is primary %t with %v", pb.me, pb.isPrimary(), *args)
+	DPrintf("%s", prefix)
 	if !pb.isPrimary() {
+		DPrintf("%s not primary", prefix)
 		reply.Err = ErrWrongServer
 		return nil
 	}
-	DPrintf("11111 put handler %v, %v, %v\n", *args, pb.me, pb.primary)
 	req := SyncArgs{
 		Op:      SyncTypePut,
 		Args:    *args,
 		Viewnum: pb.viewNum,
 	}
-	DPrintf("22222 put handler %v, %v, %v\n", *args, pb.me, pb.primary)
 	if !pb.forwardToBackup(&req) {
+		DPrintf("%s forward fail", prefix)
 		reply.Err = ErrWrongView
 		return nil
 	}
-	DPrintf("33333 put handler %v, %v, %v\n", *args, pb.me, pb.primary)
 	client := args.Id
 	seq := args.Seq
 	key := args.Key
@@ -117,6 +104,7 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 				reply.PreviousValue = value.(string)
 			}
 			reply.Err = OK
+			DPrintf("%s return with cached value %v", prefix, value)
 			return nil
 		}
 	}
@@ -130,6 +118,7 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 		pb.lastClientResult[client] = true
 	}
 	pb.repo[key] = value
+	DPrintf("%s put ok", prefix)
 	return nil
 }
 
@@ -137,9 +126,10 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
-	DPrintf("get handler %v, %v\n", pb.primary, pb.me)
+	prefix := fmt.Sprintf("get handler me %s is primary %t with %v", pb.me, pb.isPrimary(), *args)
 	if !pb.isPrimary() {
 		reply.Err = ErrWrongServer
+		DPrintf("%s not primary", prefix)
 		return nil
 	}
 	req := SyncArgs{
@@ -149,6 +139,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	}
 	if !pb.forwardToBackup(&req) {
 		reply.Err = ErrWrongView
+		DPrintf("%s forward fail", prefix)
 		return nil
 	}
 	client := args.Id
@@ -165,6 +156,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 				reply.Err = OK
 				reply.Value = value.(string)
 			}
+			DPrintf("%s return with cached value %v", prefix, reply.Value)
 			return nil
 		}
 	}
@@ -178,24 +170,27 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 		pb.lastClientResult[client] = nil
 		reply.Err = ErrNoKey
 	}
+	DPrintf("%s get ok", prefix)
 	return nil
 }
 
 func (pb *PBServer) Forward(args *SyncArgs, reply *SyncReply) error {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
+	prefix := fmt.Sprintf("forward handler me %s is primary %t with %v", pb.me, pb.isPrimary(), *args)
 	if args.Viewnum < pb.viewNum {
 		reply.Err = ErrWrongView
+		DPrintf("%s req view smaller %d vs %d", prefix, args.Viewnum, pb.viewNum)
 		return nil
 	}
 	if args.Viewnum > pb.viewNum {
 		reply.Err = ErrFutureView
+		DPrintf("%s req view greater %d vs %d", prefix, args.Viewnum, pb.viewNum)
 		return nil
 	}
 	if pb.backup != pb.me {
 		panic(fmt.Sprintf("same view %d, different perception [%s, %s]", pb.viewNum, pb.primary, pb.backup))
 	}
-	DPrintf("forward %v, me: %v\n", args, pb.me)
 	if args.Op == SyncTypeGet {
 		getArgs := args.Args.(GetArgs)
 		client := getArgs.Id
@@ -208,6 +203,7 @@ func (pb *PBServer) Forward(args *SyncArgs, reply *SyncReply) error {
 			pb.lastClientResult[client] = nil
 		}
 		reply.Err = OK
+		DPrintf("%s apply get op %v", prefix, getArgs)
 		return nil
 	} else {
 		putArgs := args.Args.(PutArgs)
@@ -237,6 +233,7 @@ func (pb *PBServer) Forward(args *SyncArgs, reply *SyncReply) error {
 			pb.lastClientResult[client] = true
 		}
 		pb.repo[key] = value
+		DPrintf("%s apply put op %v", prefix, putArgs)
 		return nil
 	}
 }
@@ -246,14 +243,12 @@ func (pb *PBServer) tick() {
 	// Your code here.
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
+	prefix := fmt.Sprintf("server tick me %v is primary %t ping view %d", pb.me, pb.isPrimary(), pb.viewNum)
 	view, err := pb.vs.Ping(pb.viewNum)
-	prefix := fmt.Sprintf("tick me: %v, is primary: %t, view %d", pb.me, pb.isPrimary(), pb.viewNum)
-	DPrintf("%s ping return %v, %v\n", prefix, view, err)
 	if err == nil {
-		// DPrintf("server tick get new view: %v vs [%d, %s, %s]\n", view, pb.viewNum, pb.primary, pb.backup)
 		if view.Primary == pb.me {
 			if view.Backup != "" && view.Backup != pb.backup {
-				DPrintf("%s will dump state to %s\n", prefix, view.Backup)
+				DPrintf("%s will dump state to %s", prefix, view.Backup)
 				args := DumpArgs{
 					Viewnum:          view.Viewnum,
 					LastClientSeq:    pb.lastClientSeq,
@@ -261,36 +256,44 @@ func (pb *PBServer) tick() {
 					Repo:             pb.repo,
 				}
 				if !pb.dumpToBackup(view.Backup, &args) {
+					DPrintf("%s fail dump state to %s", prefix, view.Backup)
 					return
 				}
 			}
 		}
+		DPrintf("%s will update to view %v", prefix, view)
 		pb.viewNum = view.Viewnum
 		pb.primary = view.Primary
 		pb.backup = view.Backup
+	} else {
+		DPrintf("%s ping view return %v, %v", prefix, view, err)
 	}
 }
 
 func (pb *PBServer) dumpToBackup(backup string, args *DumpArgs) bool {
 	reply := DumpReply{}
-	prefix := fmt.Sprintf("dumpToBackup me: %v, is primary: %t, view %d", pb.me, pb.isPrimary(), pb.viewNum)
+	prefix := fmt.Sprintf("dumpToBackup me %v is primary %t to %s with %v", pb.me, pb.isPrimary(), backup, *args)
 	ret := call(backup, "PBServer.Dump", args, &reply)
-	DPrintf("%s dump result %v, %v\n", prefix, ret, reply)
 	if ret && reply.Err == OK {
+		DPrintf("%s dump ok", prefix)
 		return true
 	}
+	DPrintf("%s dump fail with %v, %v", prefix, ret, reply)
 	return false
 }
 
 func (pb *PBServer) Dump(args *DumpArgs, reply *DumpReply) error {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
+	prefix := fmt.Sprintf("forward handler me %s is primary %t with %v", pb.me, pb.isPrimary(), *args)
 	if args.Viewnum < pb.viewNum {
 		reply.Err = ErrWrongView
+		DPrintf("%s req view smaller %d vs %d", prefix, args.Viewnum, pb.viewNum)
 		return nil
 	}
 	if args.Viewnum > pb.viewNum {
 		reply.Err = ErrFutureView
+		DPrintf("%s req view greater %d vs %d", prefix, args.Viewnum, pb.viewNum)
 		return nil
 	}
 	if pb.backup != pb.me {
@@ -301,6 +304,7 @@ func (pb *PBServer) Dump(args *DumpArgs, reply *DumpReply) error {
 	pb.repo = args.Repo
 	pb.lastClientSeq = args.LastClientSeq
 	pb.lastClientResult = args.LastClientResult
+	DPrintf("%s dump ok", prefix)
 	return nil
 }
 
@@ -328,6 +332,7 @@ func StartServer(vshost string, me string) *PBServer {
 	pb.vs = viewservice.MakeClerk(me, vshost)
 	pb.finish = make(chan interface{})
 	// Your pb.* initializations here.
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	pb.repo = make(map[string]string)
 	pb.lastClientSeq = make(map[int64]int64)
 	pb.lastClientResult = make(map[int64]interface{})
@@ -382,7 +387,7 @@ func StartServer(vshost string, me string) *PBServer {
 				pb.kill()
 			}
 		}
-		DPrintf("%s: wait until all request are done\n", pb.me)
+		DPrintf("%s: wait until all request are done", pb.me)
 		pb.done.Wait()
 		// If you have an additional thread in your solution, you could
 		// have it read to the finish channel to hear when to terminate.
