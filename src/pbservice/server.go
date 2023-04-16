@@ -1,15 +1,19 @@
 package pbservice
 
-import "net"
-import "fmt"
-import "net/rpc"
-import "log"
-import "time"
-import "viewservice"
-import "os"
-import "syscall"
-import "math/rand"
-import "sync"
+import (
+	"fmt"
+	"log"
+	"math/rand"
+	"net"
+	"net/rpc"
+	"os"
+	"strconv"
+	"sync"
+	"syscall"
+	"time"
+
+	"6.824.2014/viewservice"
+)
 
 //import "strconv"
 
@@ -17,118 +21,316 @@ import "sync"
 const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
-  if Debug > 0 {
-    n, err = fmt.Printf(format, a...)
-  }
-  return
+	if Debug > 0 {
+		n, err = fmt.Printf(format, a...)
+	}
+	return
 }
 
 type PBServer struct {
-  l net.Listener
-  dead bool // for testing
-  unreliable bool // for testing
-  me string
-  vs *viewservice.Clerk
-  done sync.WaitGroup
-  finish chan interface{}
-  // Your declarations here.
+	l          net.Listener
+	dead       bool // for testing
+	unreliable bool // for testing
+	me         string
+	vs         *viewservice.Clerk
+	done       sync.WaitGroup
+	finish     chan interface{}
+	// Your declarations here.
+	mu sync.Mutex
+
+	viewNum          uint
+	primary          string
+	backup           string
+	lastClientSeq    map[int64]int64
+	lastClientResult map[int64]interface{}
+	repo             map[string]string
+}
+
+func (pb *PBServer) isPrimary() bool {
+	return pb.me == pb.primary
+}
+
+func (pb *PBServer) syncToBackup(args *SyncArgs) bool {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	if pb.backup == "" {
+		return true
+	}
+	for !pb.killed() {
+		reply := SyncReply{}
+		ret := call(pb.backup, "PBServer.Forward", args, &reply)
+		if ret {
+			if reply.Err == OK {
+				return true
+			}
+			if reply.Err == ErrWrongView {
+				break
+			}
+		}
+	}
+	return false
 }
 
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
-  // Your code here.
-  return nil
+	// Your code here.
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	if !pb.isPrimary() {
+		reply.Err = ErrWrongServer
+		return nil
+	}
+	req := SyncArgs{
+		Op:      SyncTypePut,
+		Args:    *args,
+		Viewnum: pb.viewNum,
+	}
+	if !pb.syncToBackup(&req) {
+		reply.Err = ErrWrongView
+		return nil
+	}
+	client := args.Id
+	seq := args.Seq
+	key := args.Key
+	value := args.Value
+	if args.DoHash {
+		h := hash(pb.repo[key] + value)
+		value = strconv.Itoa(int(h))
+	}
+	if lastSeq, ok := pb.lastClientSeq[client]; ok {
+		if seq < lastSeq {
+			panic(fmt.Sprintf("client %d seq out of order %d vs %d", client, seq, lastSeq))
+		}
+		if seq == lastSeq {
+			value := pb.lastClientResult[client]
+			if args.DoHash {
+				reply.PreviousValue = value.(string)
+			}
+			reply.Err = OK
+			return nil
+		}
+	}
+	prev := pb.repo[key]
+	pb.lastClientSeq[client] = seq
+	reply.Err = OK
+	if args.DoHash {
+		pb.lastClientResult[client] = prev
+		reply.PreviousValue = prev
+	} else {
+		pb.lastClientResult[client] = true
+	}
+	pb.repo[key] = value
+	return nil
 }
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
-  // Your code here.
-  return nil
+	// Your code here.
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	if !pb.isPrimary() {
+		reply.Err = ErrWrongServer
+		return nil
+	}
+	req := SyncArgs{
+		Op:      SyncTypeGet,
+		Args:    *args,
+		Viewnum: pb.viewNum,
+	}
+	if !pb.syncToBackup(&req) {
+		reply.Err = ErrWrongView
+		return nil
+	}
+	client := args.Id
+	seq := args.Seq
+	if lastSeq, ok := pb.lastClientSeq[client]; ok {
+		if seq < lastSeq {
+			panic(fmt.Sprintf("client %d seq out of order %d vs %d", client, seq, lastSeq))
+		}
+		if seq == lastSeq {
+			value := pb.lastClientResult[client]
+			if value == nil {
+				reply.Err = ErrNoKey
+			} else {
+				reply.Err = OK
+				reply.Value = value.(string)
+			}
+			return nil
+		}
+	}
+	if value, ok := pb.repo[args.Key]; ok {
+		pb.lastClientSeq[client] = seq
+		pb.lastClientResult[client] = value
+		reply.Err = OK
+		reply.Value = value
+	} else {
+		pb.lastClientSeq[client] = seq
+		pb.lastClientResult[client] = nil
+		reply.Err = ErrNoKey
+	}
+	return nil
 }
 
+func (pb *PBServer) Forward(args *SyncArgs, reply *SyncReply) error {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	if args.Viewnum < pb.viewNum {
+		reply.Err = ErrWrongView
+		return nil
+	}
+	if args.Viewnum > pb.viewNum {
+		reply.Err = ErrFutureView
+		return nil
+	}
+	if pb.backup != pb.me {
+		panic(fmt.Sprintf("same view %d, different perception [%s, %s]", pb.viewNum, pb.primary, pb.backup))
+	}
+	if args.Op == SyncTypeGet {
+		getArgs := args.Args.(PutArgs)
+		client := getArgs.Id
+		seq := getArgs.Seq
+		key := getArgs.Key
+		pb.lastClientSeq[client] = seq
+		if val, ok := pb.repo[key]; ok {
+			pb.lastClientResult[client] = val
+		} else {
+			pb.lastClientResult[client] = nil
+		}
+		reply.Err = OK
+		return nil
+	} else {
+		putArgs := args.Args.(PutArgs)
+		client := putArgs.Id
+		seq := putArgs.Seq
+		key := putArgs.Key
+		value := putArgs.Value
+		if putArgs.DoHash {
+			h := hash(pb.repo[key] + value)
+			value = strconv.Itoa(int(h))
+		}
+		if lastSeq, ok := pb.lastClientSeq[client]; ok {
+			if seq < lastSeq {
+				panic(fmt.Sprintf("client %d seq out of order %d vs %d", client, seq, lastSeq))
+			}
+			if seq == lastSeq {
+				reply.Err = OK
+				return nil
+			}
+		}
+		prev := pb.repo[key]
+		pb.lastClientSeq[client] = seq
+		reply.Err = OK
+		if putArgs.DoHash {
+			pb.lastClientResult[client] = prev
+		} else {
+			pb.lastClientResult[client] = true
+		}
+		pb.repo[key] = value
+		return nil
+	}
+}
 
 // ping the viewserver periodically.
 func (pb *PBServer) tick() {
-  // Your code here.
-}
+	// Your code here.
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	view, err := pb.vs.Ping(pb.viewNum)
+	if err == nil {
+		if view.Primary == pb.me {
+			if view.Backup != "" && view.Backup != pb.backup {
 
+			}
+		}
+		pb.viewNum = view.Viewnum
+		pb.primary = view.Primary
+		pb.backup = view.Backup
+	}
+}
 
 // tell the server to shut itself down.
 // please do not change this function.
 func (pb *PBServer) kill() {
-  pb.dead = true
-  pb.l.Close()
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	pb.dead = true
+	pb.l.Close()
 }
 
+func (pb *PBServer) killed() bool {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	return pb.dead
+}
 
 func StartServer(vshost string, me string) *PBServer {
-  pb := new(PBServer)
-  pb.me = me
-  pb.vs = viewservice.MakeClerk(me, vshost)
-  pb.finish = make(chan interface{})
-  // Your pb.* initializations here.
+	pb := new(PBServer)
+	pb.me = me
+	pb.vs = viewservice.MakeClerk(me, vshost)
+	pb.finish = make(chan interface{})
+	// Your pb.* initializations here.
 
-  rpcs := rpc.NewServer()
-  rpcs.Register(pb)
+	rpcs := rpc.NewServer()
+	rpcs.Register(pb)
 
-  os.Remove(pb.me)
-  l, e := net.Listen("unix", pb.me);
-  if e != nil {
-    log.Fatal("listen error: ", e);
-  }
-  pb.l = l
+	os.Remove(pb.me)
+	l, e := net.Listen("unix", pb.me)
+	if e != nil {
+		log.Fatal("listen error: ", e)
+	}
+	pb.l = l
 
-  // please do not change any of the following code,
-  // or do anything to subvert it.
+	// please do not change any of the following code,
+	// or do anything to subvert it.
 
-  go func() {
-    for pb.dead == false {
-      conn, err := pb.l.Accept()
-      if err == nil && pb.dead == false {
-        if pb.unreliable && (rand.Int63() % 1000) < 100 {
-          // discard the request.
-          conn.Close()
-        } else if pb.unreliable && (rand.Int63() % 1000) < 200 {
-          // process the request but force discard of reply.
-          c1 := conn.(*net.UnixConn)
-          f, _ := c1.File()
-          err := syscall.Shutdown(int(f.Fd()), syscall.SHUT_WR)
-          if err != nil {
-            fmt.Printf("shutdown: %v\n", err)
-          }
-          pb.done.Add(1)
-          go func() {
-            rpcs.ServeConn(conn)
-            pb.done.Done()
-          }()
-        } else {
-          pb.done.Add(1)
-          go func() {
-            rpcs.ServeConn(conn)
-            pb.done.Done()
-          }()
-        }
-      } else if err == nil {
-        conn.Close()
-      }
-      if err != nil && pb.dead == false {
-        fmt.Printf("PBServer(%v) accept: %v\n", me, err.Error())
-        pb.kill()
-      }
-    }
-    DPrintf("%s: wait until all request are done\n", pb.me)
-    pb.done.Wait() 
-    // If you have an additional thread in your solution, you could
-    // have it read to the finish channel to hear when to terminate.
-    close(pb.finish)
-  }()
+	go func() {
+		for !pb.killed() {
+			conn, err := pb.l.Accept()
+			if err == nil && !pb.killed() {
+				if pb.unreliable && (rand.Int63()%1000) < 100 {
+					// discard the request.
+					conn.Close()
+				} else if pb.unreliable && (rand.Int63()%1000) < 200 {
+					// process the request but force discard of reply.
+					c1 := conn.(*net.UnixConn)
+					f, _ := c1.File()
+					err := syscall.Shutdown(int(f.Fd()), syscall.SHUT_WR)
+					if err != nil {
+						fmt.Printf("shutdown: %v\n", err)
+					}
+					pb.done.Add(1)
+					go func() {
+						rpcs.ServeConn(conn)
+						pb.done.Done()
+					}()
+				} else {
+					pb.done.Add(1)
+					go func() {
+						rpcs.ServeConn(conn)
+						pb.done.Done()
+					}()
+				}
+			} else if err == nil {
+				conn.Close()
+			}
+			if err != nil && !pb.killed() {
+				fmt.Printf("PBServer(%v) accept: %v\n", me, err.Error())
+				pb.kill()
+			}
+		}
+		DPrintf("%s: wait until all request are done\n", pb.me)
+		pb.done.Wait()
+		// If you have an additional thread in your solution, you could
+		// have it read to the finish channel to hear when to terminate.
+		close(pb.finish)
+	}()
 
-  pb.done.Add(1)
-  go func() {
-    for pb.dead == false {
-      pb.tick()
-      time.Sleep(viewservice.PingInterval)
-    }
-    pb.done.Done()
-  }()
+	pb.done.Add(1)
+	go func() {
+		for !pb.killed() {
+			pb.tick()
+			time.Sleep(viewservice.PingInterval)
+		}
+		pb.done.Done()
+	}()
 
-  return pb
+	return pb
 }
