@@ -1,6 +1,7 @@
 package pbservice
 
 import (
+	"encoding/gob"
 	"fmt"
 	"log"
 	"math/rand"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,8 +31,8 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 
 type PBServer struct {
 	l          net.Listener
-	dead       bool // for testing
-	unreliable bool // for testing
+	dead       int32 // for testing
+	unreliable bool  // for testing
 	me         string
 	vs         *viewservice.Clerk
 	done       sync.WaitGroup
@@ -50,15 +52,20 @@ func (pb *PBServer) isPrimary() bool {
 	return pb.me == pb.primary
 }
 
-func (pb *PBServer) syncToBackup(args *SyncArgs) bool {
-	pb.mu.Lock()
-	defer pb.mu.Unlock()
+func (pb *PBServer) forwardToBackup(args *SyncArgs) bool {
+	// pb.mu.Lock()
+	// defer pb.mu.Unlock()
+	// DPrintf("xxxxxxxxxxxxxxxxxxxx %v\n", pb.backup)
 	if pb.backup == "" {
 		return true
 	}
+	// DPrintf("yyyyyyyyyyyyyyyyyyy\n")
 	for !pb.killed() {
+		// DPrintf("zzzzzzzzzzzzzzzzz\n")
 		reply := SyncReply{}
+		DPrintf("111111111 syncToBackup %v, %v, %v\n", pb.backup, pb.me, *args)
 		ret := call(pb.backup, "PBServer.Forward", args, &reply)
+		DPrintf("111111111 after syncToBackup %v, %v, %v\n", pb.backup, pb.me, ret)
 		if ret {
 			if reply.Err == OK {
 				return true
@@ -75,19 +82,23 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	// Your code here.
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
+	DPrintf("put handler %v, %v, %v\n", *args, pb.me, pb.primary)
 	if !pb.isPrimary() {
 		reply.Err = ErrWrongServer
 		return nil
 	}
+	DPrintf("11111 put handler %v, %v, %v\n", *args, pb.me, pb.primary)
 	req := SyncArgs{
 		Op:      SyncTypePut,
 		Args:    *args,
 		Viewnum: pb.viewNum,
 	}
-	if !pb.syncToBackup(&req) {
+	DPrintf("22222 put handler %v, %v, %v\n", *args, pb.me, pb.primary)
+	if !pb.forwardToBackup(&req) {
 		reply.Err = ErrWrongView
 		return nil
 	}
+	DPrintf("33333 put handler %v, %v, %v\n", *args, pb.me, pb.primary)
 	client := args.Id
 	seq := args.Seq
 	key := args.Key
@@ -126,6 +137,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
+	DPrintf("get handler %v, %v\n", pb.primary, pb.me)
 	if !pb.isPrimary() {
 		reply.Err = ErrWrongServer
 		return nil
@@ -135,7 +147,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 		Args:    *args,
 		Viewnum: pb.viewNum,
 	}
-	if !pb.syncToBackup(&req) {
+	if !pb.forwardToBackup(&req) {
 		reply.Err = ErrWrongView
 		return nil
 	}
@@ -183,8 +195,9 @@ func (pb *PBServer) Forward(args *SyncArgs, reply *SyncReply) error {
 	if pb.backup != pb.me {
 		panic(fmt.Sprintf("same view %d, different perception [%s, %s]", pb.viewNum, pb.primary, pb.backup))
 	}
+	DPrintf("forward %v, me: %v\n", args, pb.me)
 	if args.Op == SyncTypeGet {
-		getArgs := args.Args.(PutArgs)
+		getArgs := args.Args.(GetArgs)
 		client := getArgs.Id
 		seq := getArgs.Seq
 		key := getArgs.Key
@@ -234,10 +247,22 @@ func (pb *PBServer) tick() {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
 	view, err := pb.vs.Ping(pb.viewNum)
+	prefix := fmt.Sprintf("tick me: %v, is primary: %t, view %d", pb.me, pb.isPrimary(), pb.viewNum)
+	DPrintf("%s ping return %v, %v\n", prefix, view, err)
 	if err == nil {
+		// DPrintf("server tick get new view: %v vs [%d, %s, %s]\n", view, pb.viewNum, pb.primary, pb.backup)
 		if view.Primary == pb.me {
 			if view.Backup != "" && view.Backup != pb.backup {
-
+				DPrintf("%s will dump state to %s\n", prefix, view.Backup)
+				args := DumpArgs{
+					Viewnum:          view.Viewnum,
+					LastClientSeq:    pb.lastClientSeq,
+					LastClientResult: pb.lastClientResult,
+					Repo:             pb.repo,
+				}
+				if !pb.dumpToBackup(view.Backup, &args) {
+					return
+				}
 			}
 		}
 		pb.viewNum = view.Viewnum
@@ -246,19 +271,55 @@ func (pb *PBServer) tick() {
 	}
 }
 
+func (pb *PBServer) dumpToBackup(backup string, args *DumpArgs) bool {
+	reply := DumpReply{}
+	prefix := fmt.Sprintf("dumpToBackup me: %v, is primary: %t, view %d", pb.me, pb.isPrimary(), pb.viewNum)
+	ret := call(backup, "PBServer.Dump", args, &reply)
+	DPrintf("%s dump result %v, %v\n", prefix, ret, reply)
+	if ret && reply.Err == OK {
+		return true
+	}
+	return false
+}
+
+func (pb *PBServer) Dump(args *DumpArgs, reply *DumpReply) error {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	if args.Viewnum < pb.viewNum {
+		reply.Err = ErrWrongView
+		return nil
+	}
+	if args.Viewnum > pb.viewNum {
+		reply.Err = ErrFutureView
+		return nil
+	}
+	if pb.backup != pb.me {
+		panic(fmt.Sprintf("same view %d, different perception [%s, %s]", pb.viewNum, pb.backup, pb.me))
+	}
+
+	reply.Err = OK
+	pb.repo = args.Repo
+	pb.lastClientSeq = args.LastClientSeq
+	pb.lastClientResult = args.LastClientResult
+	return nil
+}
+
 // tell the server to shut itself down.
 // please do not change this function.
 func (pb *PBServer) kill() {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
-	pb.dead = true
+	// pb.dead = true
+	atomic.StoreInt32(&pb.dead, 1)
 	pb.l.Close()
 }
 
 func (pb *PBServer) killed() bool {
-	pb.mu.Lock()
-	defer pb.mu.Unlock()
-	return pb.dead
+	// pb.mu.Lock()
+	// defer pb.mu.Unlock()
+	// return pb.dead
+	z := atomic.LoadInt32(&pb.dead)
+	return z == 1
 }
 
 func StartServer(vshost string, me string) *PBServer {
@@ -267,6 +328,11 @@ func StartServer(vshost string, me string) *PBServer {
 	pb.vs = viewservice.MakeClerk(me, vshost)
 	pb.finish = make(chan interface{})
 	// Your pb.* initializations here.
+	pb.repo = make(map[string]string)
+	pb.lastClientSeq = make(map[int64]int64)
+	pb.lastClientResult = make(map[int64]interface{})
+	gob.Register(PutArgs{})
+	gob.Register(GetArgs{})
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(pb)

@@ -88,11 +88,14 @@ func (ck *Clerk) Get(key string) string {
 	}
 	reply := GetReply{}
 	for {
+		DPrintf("get %v, %v\n", ck.primary, ck.me)
 		if ck.primary != "" {
 			for {
+				DPrintf("call rpc get %v, %v\n", ck.primary, ck.me)
 				ret := call(ck.primary, "PBServer.Get", &args, &reply)
+				DPrintf("after call rpc get %v, %v, %v\n", ck.primary, ck.me, ret)
 				if !ret {
-					continue
+					break
 				}
 				if reply.Err == OK {
 					return reply.Value
@@ -107,7 +110,7 @@ func (ck *Clerk) Get(key string) string {
 		}
 		view, err := ck.vs.Get()
 		if !err {
-			DPrintf("get view error %v", err)
+			DPrintf("get view error %v\n", err)
 		} else {
 			ck.viewNum = view.Viewnum
 			ck.primary = view.Primary
@@ -131,11 +134,14 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 	}
 	reply := PutReply{}
 	for {
+		DPrintf("putext %v, %v\n", ck.primary, ck.me)
 		if ck.primary != "" {
 			for {
+				DPrintf("call rpc %v, %v\n", ck.primary, ck.me)
 				ret := call(ck.primary, "PBServer.Put", &args, &reply)
+				DPrintf("after call rpc %v, %v\n", ck.primary, ck.me)
 				if !ret {
-					continue
+					break
 				}
 				if reply.Err == OK {
 					return reply.PreviousValue
@@ -147,8 +153,9 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 		}
 		view, err := ck.vs.Get()
 		if !err {
-			DPrintf("get view error %v", err)
+			DPrintf("get view error %v\n", err)
 		} else {
+			DPrintf("PutExt get new view: %v\n", view)
 			ck.viewNum = view.Viewnum
 			ck.primary = view.Primary
 			ck.backup = view.Backup

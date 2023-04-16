@@ -59,6 +59,17 @@ type SyncReply struct {
 	Err Err
 }
 
+type DumpArgs struct {
+	Viewnum          uint
+	LastClientSeq    map[int64]int64
+	LastClientResult map[int64]interface{}
+	Repo             map[string]string
+}
+
+type DumpReply struct {
+	Err Err
+}
+
 func hash(s string) uint32 {
 	h := fnv.New32a()
 	h.Write([]byte(s))
