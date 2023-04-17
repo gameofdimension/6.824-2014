@@ -3,11 +3,12 @@ package pbservice
 import "hash/fnv"
 
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongServer = "ErrWrongServer"
-	ErrWrongView   = "ErrWrongView"
-	ErrFutureView  = "ErrFutureView"
+	OK              = "OK"
+	ErrNoKey        = "ErrNoKey"
+	ErrWrongServer  = "ErrWrongServer"
+	ErrWrongView    = "ErrWrongView"
+	ErrFutureView   = "ErrFutureView"
+	ErrObsoleteView = "ErrObsoleteView"
 )
 
 type Err string

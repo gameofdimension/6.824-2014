@@ -59,6 +59,7 @@ func MakeClerk(vshost string, me string) *Clerk {
 func call(srv string, rpcname string, args interface{}, reply interface{}) bool {
 	c, errx := rpc.Dial("unix", srv)
 	if errx != nil {
+		DPrintf("dial fail %s, %s, %v", srv, rpcname, errx)
 		return false
 	}
 	defer c.Close()

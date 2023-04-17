@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+const Debug = 0
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug > 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
 type ViewServer struct {
 	mu   sync.Mutex
 	l    net.Listener
@@ -43,6 +52,7 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 		return nil
 	}
 	if args.Me == vs.primary && args.Viewnum == uint(vs.num) && !vs.acked {
+		DPrintf("view service ack view num %d", vs.num)
 		vs.acked = true
 	}
 	reply.View.Viewnum = uint(vs.num)
@@ -90,10 +100,12 @@ func (vs *ViewServer) tick() {
 		return
 	}
 	if !vs.acked {
+		DPrintf("view service tick %d not ack", vs.num)
 		return
 	}
 	next := vs.chooseOne()
 	if vs.isDead(vs.primary) || vs.isRestarted(vs.primary) {
+		old := vs.primary
 		vs.acked = false
 		vs.num += 1
 		vs.primary = vs.backup
@@ -101,16 +113,20 @@ func (vs *ViewServer) tick() {
 		if next != "" {
 			vs.backup = next
 		}
+		DPrintf("view service tick primary %s dead -> [%d, %s, %s]", old, vs.num, vs.primary, vs.backup)
 	} else if vs.backup == "" {
 		if next != "" {
 			vs.acked = false
 			vs.num += 1
 			vs.backup = next
+			DPrintf("view service promote idle to backup -> [%d, %s, %s]", vs.num, vs.primary, vs.backup)
 		}
 	} else if vs.isDead(vs.backup) || vs.isRestarted(vs.backup) {
+		old := vs.backup
 		vs.acked = false
 		vs.num += 1
 		vs.backup = next
+		DPrintf("view service tick backup %s dead -> [%d, %s, %s]", old, vs.num, vs.primary, vs.backup)
 	}
 }
 

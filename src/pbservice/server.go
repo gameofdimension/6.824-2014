@@ -17,7 +17,7 @@ import (
 )
 
 // Debugging
-const Debug = 1
+const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -43,21 +43,22 @@ type PBServer struct {
 	lastClientSeq    map[int64]int64
 	lastClientResult map[int64]interface{}
 	repo             map[string]string
+	lastDumpView     uint
 }
 
 func (pb *PBServer) isPrimary() bool {
 	return pb.me == pb.primary
 }
 
-func (pb *PBServer) forwardToBackup(args *SyncArgs) bool {
-	if pb.backup == "" {
+func (pb *PBServer) forwardToBackup(me string, viewnum uint, primary string, backup string, args *SyncArgs) bool {
+	if backup == "" {
 		return true
 	}
 	for !pb.killed() {
 		reply := SyncReply{}
-		prefix := fmt.Sprintf("syncToBackup %v is primary %t sync to backup %s with %v", pb.me, pb.isPrimary(), pb.backup, *args)
+		prefix := fmt.Sprintf("forwardToBackup %v is primary? %t forward to backup %s with %v", me, me == primary, backup, *args)
 		DPrintf("%s", prefix)
-		ret := call(pb.backup, "PBServer.Forward", args, &reply)
+		ret := call(backup, "PBServer.Forward", args, &reply)
 		if ret && reply.Err == ErrWrongView {
 			DPrintf("%s fail with view not match %v", prefix, reply)
 			return false
@@ -67,8 +68,8 @@ func (pb *PBServer) forwardToBackup(args *SyncArgs) bool {
 			break
 		}
 		view, rc := pb.vs.Get()
-		if rc && view.Backup != pb.backup {
-			DPrintf("%s view changed %v vs [%d, %s, %s]", prefix, view, pb.viewNum, pb.primary, pb.backup)
+		if rc && view.Backup != backup {
+			DPrintf("%s view changed %v vs [%d, %s, %s]", prefix, view, viewnum, primary, backup)
 			break
 		}
 		DPrintf("%s will retry", prefix)
@@ -80,44 +81,67 @@ func (pb *PBServer) forwardToBackup(args *SyncArgs) bool {
 // ping the viewserver periodically.
 func (pb *PBServer) tick() {
 	// Your code here.
-	pb.mu.Lock()
-	defer pb.mu.Unlock()
-	prefix := fmt.Sprintf("server tick me %v is primary %t ping view %d", pb.me, pb.isPrimary(), pb.viewNum)
+	// 该函数不应该阻塞，否则会造成 view service 将其下线
+	prefix := fmt.Sprintf("server tick me %v is primary? %t ping view %d", pb.me, pb.isPrimary(), pb.viewNum)
 	view, err := pb.vs.Ping(pb.viewNum)
 	if err == nil {
-		if view.Primary == pb.me {
-			if view.Backup != "" && view.Backup != pb.backup {
-				DPrintf("%s will dump state to %s", prefix, view.Backup)
-				args := DumpArgs{
-					Viewnum:          view.Viewnum,
-					LastClientSeq:    pb.lastClientSeq,
-					LastClientResult: pb.lastClientResult,
-					Repo:             pb.repo,
+		if view.Viewnum < pb.viewNum {
+			panic(fmt.Sprintf("view num get smaller %d vs %d impossible", view.Viewnum, pb.viewNum))
+		} else if view.Viewnum > pb.viewNum {
+			go func(expected uint) {
+				if view.Primary == pb.me && view.Backup != "" {
+					DPrintf("%s will dump state to %s", prefix, view.Backup)
+					pb.mu.Lock()
+					args := DumpArgs{
+						Viewnum:          view.Viewnum,
+						LastClientSeq:    pb.lastClientSeq,
+						LastClientResult: pb.lastClientResult,
+						Repo:             pb.repo,
+					}
+					pb.mu.Unlock()
+					if !pb.dumpToBackup(view.Viewnum, view.Backup, &args) {
+						DPrintf("%s fail dump state to %s", prefix, view.Backup)
+						return
+					}
 				}
-				if !pb.dumpToBackup(view.Backup, &args) {
-					DPrintf("%s fail dump state to %s", prefix, view.Backup)
-					return
+				DPrintf("%s will update to view %v", prefix, view)
+				pb.mu.Lock()
+				if expected == pb.viewNum {
+					pb.viewNum = view.Viewnum
+					pb.primary = view.Primary
+					pb.backup = view.Backup
 				}
-			}
+				pb.mu.Unlock()
+			}(pb.viewNum)
+		} else {
+			DPrintf("%s view not change", prefix)
 		}
-		DPrintf("%s will update to view %v", prefix, view)
-		pb.viewNum = view.Viewnum
-		pb.primary = view.Primary
-		pb.backup = view.Backup
 	} else {
-		DPrintf("%s ping view return %v, %v", prefix, view, err)
+		DPrintf("%s ping view err %v, %v", prefix, err, view)
 	}
 }
 
-func (pb *PBServer) dumpToBackup(backup string, args *DumpArgs) bool {
-	reply := DumpReply{}
-	prefix := fmt.Sprintf("dumpToBackup me %v is primary %t to %s with %v", pb.me, pb.isPrimary(), backup, *args)
-	ret := call(backup, "PBServer.Dump", args, &reply)
-	if ret && reply.Err == OK {
-		DPrintf("%s dump ok", prefix)
-		return true
+func (pb *PBServer) dumpToBackup(viewnum uint, backup string, args *DumpArgs) bool {
+	prefix := fmt.Sprintf("dumpToBackup me %v is primary? %t to %s with %v", pb.me, pb.isPrimary(), backup, *args)
+	for !pb.killed() {
+		reply := DumpReply{}
+		ret := call(backup, "PBServer.Dump", args, &reply)
+		if ret && (reply.Err == OK || reply.Err == ErrObsoleteView) {
+			DPrintf("%s dump ok with %v", prefix, reply)
+			return true
+		}
+		if ret && reply.Err == ErrWrongView {
+			break
+		}
+		view, rc := pb.vs.Get()
+		if rc && viewnum != view.Viewnum {
+			DPrintf("%s view changed %v vs [%d, %s, %s]", prefix, view, pb.viewNum, pb.primary, pb.backup)
+			return true
+		}
+		DPrintf("%s will retry", prefix)
+		time.Sleep(viewservice.PingInterval)
 	}
-	DPrintf("%s dump fail with %v, %v", prefix, ret, reply)
+	DPrintf("%s dump fail", prefix)
 	return false
 }
 
@@ -126,6 +150,7 @@ func (pb *PBServer) dumpToBackup(backup string, args *DumpArgs) bool {
 func (pb *PBServer) kill() {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
+	DPrintf("kill %s, %t", pb.me, pb.isPrimary())
 	atomic.StoreInt32(&pb.dead, 1)
 	pb.l.Close()
 }

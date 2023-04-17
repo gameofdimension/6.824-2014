@@ -9,7 +9,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
-	prefix := fmt.Sprintf("get handler me %s is primary %t with %v", pb.me, pb.isPrimary(), *args)
+	prefix := fmt.Sprintf("get handler me %s is primary? %t with %v", pb.me, pb.isPrimary(), *args)
 	if !pb.isPrimary() {
 		reply.Err = ErrWrongServer
 		DPrintf("%s not primary", prefix)
@@ -20,7 +20,7 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 		Args:    *args,
 		Viewnum: pb.viewNum,
 	}
-	if !pb.forwardToBackup(&req) {
+	if !pb.forwardToBackup(pb.me, pb.viewNum, pb.primary, pb.backup, &req) {
 		reply.Err = ErrWrongView
 		DPrintf("%s forward fail", prefix)
 		return nil
@@ -61,7 +61,7 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 	// Your code here.
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
-	prefix := fmt.Sprintf("put handler me %s is primary %t with %v", pb.me, pb.isPrimary(), *args)
+	prefix := fmt.Sprintf("put handler me %s is primary? %t with %v", pb.me, pb.isPrimary(), *args)
 	DPrintf("%s", prefix)
 	if !pb.isPrimary() {
 		DPrintf("%s not primary", prefix)
@@ -73,7 +73,7 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 		Args:    *args,
 		Viewnum: pb.viewNum,
 	}
-	if !pb.forwardToBackup(&req) {
+	if !pb.forwardToBackup(pb.me, pb.viewNum, pb.primary, pb.backup, &req) {
 		DPrintf("%s forward fail", prefix)
 		reply.Err = ErrWrongView
 		return nil
@@ -117,7 +117,7 @@ func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 func (pb *PBServer) Forward(args *SyncArgs, reply *SyncReply) error {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
-	prefix := fmt.Sprintf("forward handler me %s is primary %t with %v", pb.me, pb.isPrimary(), *args)
+	prefix := fmt.Sprintf("forward handler me %s is primary? %t with %v", pb.me, pb.isPrimary(), *args)
 	if args.Viewnum < pb.viewNum {
 		reply.Err = ErrWrongView
 		DPrintf("%s req view smaller %d vs %d", prefix, args.Viewnum, pb.viewNum)
@@ -181,7 +181,7 @@ func (pb *PBServer) Forward(args *SyncArgs, reply *SyncReply) error {
 func (pb *PBServer) Dump(args *DumpArgs, reply *DumpReply) error {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
-	prefix := fmt.Sprintf("forward handler me %s is primary %t with %v", pb.me, pb.isPrimary(), *args)
+	prefix := fmt.Sprintf("forward handler me %s is primary? %t with %v", pb.me, pb.isPrimary(), *args)
 	if args.Viewnum < pb.viewNum {
 		reply.Err = ErrWrongView
 		DPrintf("%s req view smaller %d vs %d", prefix, args.Viewnum, pb.viewNum)
@@ -195,11 +195,17 @@ func (pb *PBServer) Dump(args *DumpArgs, reply *DumpReply) error {
 	if pb.backup != pb.me {
 		panic(fmt.Sprintf("same view %d, different perception [%s, %s]", pb.viewNum, pb.backup, pb.me))
 	}
+	if args.Viewnum <= pb.lastDumpView {
+		DPrintf("%s obsolete view %d vs %d", prefix, args.Viewnum, pb.lastDumpView)
+		reply.Err = ErrObsoleteView
+		return nil
+	}
 
 	reply.Err = OK
 	pb.repo = args.Repo
 	pb.lastClientSeq = args.LastClientSeq
 	pb.lastClientResult = args.LastClientResult
+	pb.lastDumpView = args.Viewnum
 	DPrintf("%s dump ok", prefix)
 	return nil
 }
