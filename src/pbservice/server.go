@@ -148,8 +148,6 @@ func (pb *PBServer) dumpToBackup(viewnum uint, backup string, args *DumpArgs) bo
 // tell the server to shut itself down.
 // please do not change this function.
 func (pb *PBServer) kill() {
-	pb.mu.Lock()
-	defer pb.mu.Unlock()
 	DPrintf("kill %s, %t", pb.me, pb.isPrimary())
 	atomic.StoreInt32(&pb.dead, 1)
 	pb.l.Close()
