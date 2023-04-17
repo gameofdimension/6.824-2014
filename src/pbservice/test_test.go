@@ -702,7 +702,7 @@ func TestRepeatedCrashUnreliable(t *testing.T) {
   time.Sleep(time.Second)
 }
 
-func proxy(t *testing.T, port string, delay *int) {
+func proxy(t *testing.T, port string, delay *int, killed *bool) {
   portx := port + "x"
   os.Remove(portx)
   if os.Rename(port, portx) != nil {
@@ -716,7 +716,7 @@ func proxy(t *testing.T, port string, delay *int) {
     defer l.Close()
     defer os.Remove(portx)
     defer os.Remove(port)
-    for {
+    for !*killed {
       c1, err := l.Accept()
       if err != nil {
         t.Fatalf("proxy accept failed: %v\n", err)
@@ -779,7 +779,8 @@ func TestPartition1(t *testing.T) {
 
   s1 := StartServer(vshosta, port(tag, 1))
   delay := 0
-  proxy(t, port(tag, 1), &delay)
+  killed := false
+  proxy(t, port(tag, 1), &delay, &killed)
 
   deadtime := viewservice.PingInterval * viewservice.DeadPings
   time.Sleep(deadtime * 2)
@@ -844,6 +845,8 @@ func TestPartition1(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 
+  killed = true
+  time.Sleep(5 * time.Second)
   s1.kill()
   s2.kill()
   vs.Kill()
@@ -865,7 +868,8 @@ func TestPartition2(t *testing.T) {
 
   s1 := StartServer(vshosta, port(tag, 1))
   delay := 0
-  proxy(t, port(tag, 1), &delay)
+  killed := false
+  proxy(t, port(tag, 1), &delay, &killed)
 
   fmt.Printf("Test: Partitioned old primary does not complete Gets ...\n")
 
@@ -942,6 +946,7 @@ func TestPartition2(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 
+  killed = true
   s1.kill()
   s2.kill()
   s3.kill()
