@@ -92,7 +92,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 		DPrintf("Start seq too small %d vs %d, will ignore", seq, mi)
 		return
 	}
-	inst := px.findOrCreate(seq, v, Accepted)
+	inst := px.findOrCreate(seq, nil, Accepted)
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 	if inst.status == Decided {
@@ -104,6 +104,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 		return
 	}
 	inst.status = Running
+	inst.value = v
 	go px.run(px.peers, inst)
 }
 

@@ -81,6 +81,8 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 	if args.N > inst.np {
 		inst.np = args.N
 		reply.Err = OK
+		reply.NA = inst.na
+		reply.VA = inst.va
 		DPrintf("%s ok", prefix)
 		return nil
 	}
@@ -98,6 +100,7 @@ func (px *Paxos) Accept(args *AcceptArgs, reply *AcceptReply) error {
 	if args.N >= inst.np {
 		inst.np = args.N
 		inst.na = args.N
+		DPrintf("%s accept value %d: %v", prefix, args.Seq, args.V)
 		inst.va = args.V
 		reply.Err = OK
 		DPrintf("%s ok", prefix)
@@ -113,9 +116,10 @@ func (px *Paxos) Decide(args *DecideArgs, reply *DecideReply) error {
 	reply.MaxDone = px.updateMaxDone(args.Caller, args.MaxDone)
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
-	inst.status = Decided
-	inst.va = args.V
 	prefix := fmt.Sprintf("decide %d->%d with %v on status %d", args.Caller, px.me, args.Seq, inst.status)
+	inst.status = Decided
+	DPrintf("%s decide value %d: %v", prefix, args.Seq, args.V)
+	inst.va = args.V
 	DPrintf("%s ok", prefix)
 	reply.Err = OK
 	return nil

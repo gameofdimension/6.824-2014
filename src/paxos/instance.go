@@ -111,6 +111,7 @@ func (px *Paxos) doAccept(peers []string, proposalNum int, value interface{}, in
 				// accept ok for self
 				inst.np = proposalNum
 				inst.na = proposalNum
+				DPrintf("doAccept me %d self accept value %d: %v", px.me, seq, value)
 				inst.va = value
 				count += 1
 			}
@@ -161,15 +162,15 @@ func (px *Paxos) run(peers []string, inst *Instance) {
 	for !px.dead {
 		inst.proposalNum = nextProposalNum(inst.proposalNum, len(peers), inst.np)
 		proposalNum := inst.proposalNum
-		ok, na, nv := px.doPrepare(peers, proposalNum, inst)
+		ok, na, va := px.doPrepare(peers, proposalNum, inst)
 		if !ok {
 			DPrintf("prepare fail")
 			continue
 		}
 
 		value := inst.value
-		if na >= 0 && nv != nil {
-			value = nv
+		if na >= 0 && va != nil {
+			value = va
 		}
 		rc := px.doAccept(peers, proposalNum, value, inst)
 		if !rc {
