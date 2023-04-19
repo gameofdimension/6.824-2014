@@ -43,6 +43,7 @@ type Paxos struct {
 	// Your data here.
 	seqToInstance map[int]*Instance
 	maxKnown      int
+	maxDone       map[int]int
 }
 
 // call() sends an RPC to the rpcname handler on server srv
@@ -64,7 +65,7 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 	if err != nil {
 		err1 := err.(*net.OpError)
 		if err1.Err != syscall.ENOENT && err1.Err != syscall.ECONNREFUSED {
-			fmt.Printf("paxos Dial() failed: %v\n", err1)
+			DPrintf("paxos Dial() failed: %v", err1)
 		}
 		return false
 	}
@@ -75,7 +76,7 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	fmt.Println(err)
+	DPrintf("rpc call fail %v", err)
 	return false
 }
 
@@ -86,7 +87,12 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 // is reached.
 func (px *Paxos) Start(seq int, v interface{}) {
 	// Your code here.
-	inst := px.findOrCreate(seq, Accepted)
+	mi := px.Min()
+	if seq < mi {
+		DPrintf("Start seq too small %d vs %d, will ignore", seq, mi)
+		return
+	}
+	inst := px.findOrCreate(seq, v, Accepted)
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 	if inst.status == Decided {
@@ -107,6 +113,9 @@ func (px *Paxos) Start(seq int, v interface{}) {
 // see the comments for Min() for more explanation.
 func (px *Paxos) Done(seq int) {
 	// Your code here.
+	if seq > px.maxDone[px.me] {
+		px.maxDone[px.me] = seq
+	}
 }
 
 // the application wants to know the
@@ -147,7 +156,21 @@ func (px *Paxos) Max() int {
 // instances.
 func (px *Paxos) Min() int {
 	// You code here.
-	return 0
+	px.mu.Lock()
+	defer px.mu.Unlock()
+	init := px.maxDone[px.me]
+	for _, v := range px.maxDone {
+		if v < init {
+			init = v
+		}
+	}
+
+	for k := range px.seqToInstance {
+		if k <= init {
+			delete(px.seqToInstance, k)
+		}
+	}
+	return init + 1
 }
 
 // the application wants to know whether this
@@ -157,6 +180,11 @@ func (px *Paxos) Min() int {
 // it should not contact other Paxos peers.
 func (px *Paxos) Status(seq int) (bool, interface{}) {
 	// Your code here.
+	mi := px.Min()
+	if seq < mi {
+		DPrintf("Status seq too small %d vs %d, will ignore", seq, mi)
+		return false, nil
+	}
 	inst, ok := px.seqToInstance[seq]
 	if ok && inst.status == Decided {
 		return true, inst.va
@@ -184,7 +212,11 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
 
 	// Your initialization code here.
 	px.seqToInstance = make(map[int]*Instance)
-	px.maxKnown = 0
+	px.maxDone = make(map[int]int)
+	for idx := range peers {
+		px.maxDone[idx] = -1
+	}
+	px.maxKnown = -1
 
 	if rpcs != nil {
 		// caller will create socket &c

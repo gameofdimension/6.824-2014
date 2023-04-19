@@ -76,13 +76,15 @@ func (px *Paxos) doPrepare(peers []string, proposalNum int, inst *Instance) (boo
 			inst.mu.Unlock()
 		} else {
 			args := PrepareArgs{
-				Caller: px.me,
-				Seq:    seq,
-				N:      proposalNum,
+				MaxDone: px.maxDone[px.me],
+				Caller:  px.me,
+				Seq:     seq,
+				N:       proposalNum,
 			}
 			reply := PrepareReply{}
 			ok := call(peer, "Paxos.Prepare", &args, &reply)
 			if ok && reply.Err == OK {
+				px.updateMaxDone(idx, reply.MaxDone)
 				count += 1
 				if reply.NA > maxNa {
 					maxNa = reply.NA
@@ -115,14 +117,16 @@ func (px *Paxos) doAccept(peers []string, proposalNum int, value interface{}, in
 			inst.mu.Unlock()
 		} else {
 			args := AcceptArgs{
-				Caller: px.me,
-				Seq:    seq,
-				N:      proposalNum,
-				V:      value,
+				MaxDone: px.maxDone[px.me],
+				Caller:  px.me,
+				Seq:     seq,
+				N:       proposalNum,
+				V:       value,
 			}
 			reply := AcceptReply{}
 			ok := call(peer, "Paxos.Accept", &args, &reply)
 			if ok && reply.Err == OK {
+				px.updateMaxDone(idx, reply.MaxDone)
 				count += 1
 			}
 		}
@@ -138,13 +142,15 @@ func (px *Paxos) doDecide(peers []string, value interface{}, inst *Instance) int
 			continue
 		}
 		args := DecideArgs{
-			Caller: px.me,
-			Seq:    seq,
-			V:      value,
+			MaxDone: px.maxDone[px.me],
+			Caller:  px.me,
+			Seq:     seq,
+			V:       value,
 		}
 		reply := DecideReply{}
 		ok := call(peer, "Paxos.Decide", &args, &reply)
 		if ok && reply.Err == OK {
+			px.updateMaxDone(idx, reply.MaxDone)
 			count += 1
 		}
 	}
