@@ -42,6 +42,7 @@ type Paxos struct {
 
 	// Your data here.
 	seqToInstance map[int]*Instance
+	maxKnown      int
 }
 
 // call() sends an RPC to the rpcname handler on server srv
@@ -85,7 +86,7 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 // is reached.
 func (px *Paxos) Start(seq int, v interface{}) {
 	// Your code here.
-	inst := px.findOrCreate(seq, Running)
+	inst := px.findOrCreate(seq, Accepted)
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 	if inst.status == Decided {
@@ -96,9 +97,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 		DPrintf("running agreement %d", seq)
 		return
 	}
-	if inst.status == Serving {
-		inst.status = Running
-	}
+	inst.status = Running
 	go px.run(px.peers, inst)
 }
 
@@ -115,7 +114,9 @@ func (px *Paxos) Done(seq int) {
 // this peer.
 func (px *Paxos) Max() int {
 	// Your code here.
-	return 0
+	px.mu.Lock()
+	defer px.mu.Unlock()
+	return px.maxKnown
 }
 
 // Min() should return one more than the minimum among z_i,
@@ -183,6 +184,7 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
 
 	// Your initialization code here.
 	px.seqToInstance = make(map[int]*Instance)
+	px.maxKnown = 0
 
 	if rpcs != nil {
 		// caller will create socket &c

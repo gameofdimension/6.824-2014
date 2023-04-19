@@ -17,9 +17,10 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 type Status int
 
 const (
-	Serving = 1
-	Running = 2
-	Decided = 3
+	Accepted = 0
+	Serving  = 1
+	Running  = 2
+	Decided  = 3
 )
 
 type Instance struct {
@@ -52,7 +53,7 @@ func nextProposalNum(init int, step int, np int) int {
 	for {
 		init += step
 		if init > np {
-			return np
+			return init
 		}
 	}
 }
