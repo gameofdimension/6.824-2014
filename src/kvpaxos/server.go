@@ -35,6 +35,7 @@ type KVPaxos struct {
 	lastClientSeq    map[int64]int64
 	lastClientResult map[int64]interface{}
 	repo             map[string]string
+	lastApply        int
 }
 
 // tell the server to shut itself down.
@@ -59,6 +60,10 @@ func StartServer(servers []string, me int) *KVPaxos {
 	kv.me = me
 
 	// Your initialization code here.
+	kv.lastApply = -1
+	kv.repo = make(map[string]string)
+	kv.lastClientSeq = make(map[int64]int64)
+	kv.lastClientResult = make(map[int64]interface{})
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(kv)

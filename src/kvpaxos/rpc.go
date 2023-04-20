@@ -2,12 +2,14 @@ package kvpaxos
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 )
 
 const (
-	OpGet = 1
-	OpPut = 2
+	OpNoop = 0
+	OpGet  = 1
+	OpPut  = 2
 )
 
 type OpType uint64
@@ -15,10 +17,12 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type   OpType
-	Key    string
-	Value  string
-	DoHash bool
+	Type      OpType
+	ClientId  int64
+	ClientSeq int64
+	Key       string
+	Value     string
+	DoHash    bool
 }
 
 func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
@@ -47,8 +51,10 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 
 	instance := kv.px.Max() + 1
 	op := Op{
-		Type: OpGet,
-		Key:  args.Key,
+		ClientId:  clientId,
+		ClientSeq: clientSeq,
+		Type:      OpGet,
+		Key:       args.Key,
 	}
 	kv.px.Start(instance, op)
 	rc := kv.pollPaxos(instance, op)
@@ -56,17 +62,18 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 		reply.Err = ErrSeqConflict
 		return nil
 	}
+	kv.appleyLog(instance)
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	// todo ensure all previous instance finished
-	kv.lastClientSeq[clientId] = clientSeq
-	if result, ok := kv.repo[args.Key]; ok {
-		kv.lastClientResult[clientId] = result
-		reply.Err = OK
-		reply.Value = result
-	} else {
-		kv.lastClientResult[clientId] = nil
+	if lastSeq, ok := kv.lastClientSeq[clientId]; !ok || lastSeq != clientSeq {
+		panic(fmt.Sprintf("get handler me %d client %d expected %d got %d", kv.me, clientId, clientSeq, lastSeq))
+	}
+	cached := kv.lastClientResult[clientId]
+	if cached == nil {
 		reply.Err = ErrNoKey
+	} else {
+		reply.Err = OK
+		reply.Value = cached.(string)
 	}
 	return nil
 }
@@ -94,10 +101,12 @@ func (kv *KVPaxos) Put(args *PutArgs, reply *PutReply) error {
 	kv.mu.Unlock()
 	instance := kv.px.Max() + 1
 	op := Op{
-		Type:   OpPut,
-		Key:    args.Key,
-		Value:  args.Value,
-		DoHash: args.DoHash,
+		Type:      OpPut,
+		ClientId:  clientId,
+		ClientSeq: clientSeq,
+		Key:       args.Key,
+		Value:     args.Value,
+		DoHash:    args.DoHash,
 	}
 	kv.px.Start(instance, op)
 	rc := kv.pollPaxos(instance, op)
@@ -105,9 +114,16 @@ func (kv *KVPaxos) Put(args *PutArgs, reply *PutReply) error {
 		reply.Err = ErrSeqConflict
 		return nil
 	}
+	kv.appleyLog(instance)
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	// todo ensure all previous instance finished
+	if lastSeq, ok := kv.lastClientSeq[clientId]; !ok || lastSeq != clientSeq {
+		panic(fmt.Sprintf("put handler me %d client %d expected %d got %d", kv.me, clientId, clientSeq, lastSeq))
+	}
+	reply.Err = OK
+	if args.DoHash {
+		reply.PreviousValue = kv.lastClientResult[clientId].(string)
+	}
 	return nil
 }
 
@@ -129,4 +145,61 @@ func (kv *KVPaxos) pollPaxos(instance int, targetOp Op) bool {
 		}
 	}
 	return false
+}
+
+func (kv *KVPaxos) fillGap(seq int) {
+	op := Op{
+		Type: OpNoop,
+	}
+	kv.px.Start(seq, op)
+	ok := kv.pollPaxos(seq, op)
+	DPrintf("try agree seq %d with noop, result %t", seq, ok)
+}
+
+func (kv *KVPaxos) appleyLog(seq int) {
+	for i := kv.lastApply + 1; i <= seq; i += 1 {
+		decided, val := kv.px.Status(i)
+		if !decided {
+			// todo fill gap
+			kv.fillGap(i)
+			decided, val = kv.px.Status(i)
+			if !decided {
+				panic(fmt.Sprintf("seq %d not decided after fill gap", i))
+			}
+		}
+		kv.mu.Lock()
+		op := val.(Op)
+		lastSeq, ok := kv.lastClientSeq[op.ClientId]
+		if !ok || lastSeq != op.ClientSeq {
+			if op.ClientId < lastSeq {
+				panic(fmt.Sprintf("smaller seq %d vs %d for %d", op.ClientId, lastSeq, op.ClientId))
+			}
+			if op.Type == OpPut {
+				key := op.Key
+				value := op.Value
+				previous := kv.repo[key]
+				kv.lastClientSeq[op.ClientId] = op.ClientSeq
+				if op.DoHash {
+					h := hash(previous + value)
+					value = strconv.Itoa(int(h))
+					kv.lastClientResult[op.ClientId] = previous
+				} else {
+					kv.lastClientResult[op.ClientId] = true
+				}
+				kv.repo[key] = value
+			} else if op.Type == OpGet {
+				key := op.Key
+				kv.lastClientSeq[op.ClientId] = op.ClientSeq
+				if value, ok := kv.repo[key]; ok {
+					kv.lastClientResult[op.ClientId] = value
+				} else {
+					kv.lastClientResult[op.ClientId] = nil
+				}
+			}
+		}
+		kv.lastApply = i
+		kv.mu.Unlock()
+		kv.px.Done(i)
+		kv.px.Min()
+	}
 }
