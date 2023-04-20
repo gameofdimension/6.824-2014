@@ -77,13 +77,13 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 	reply.MaxDone = px.updateMaxDone(args.Caller, args.MaxDone)
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
-	prefix := fmt.Sprintf("prepare %d->%d with %v on status %d", args.Caller, px.me, args, inst.status)
+	prefix := fmt.Sprintf("prepare %d->%d with args %v on status %d", args.Caller, px.me, args, inst.status)
 	if args.N > inst.np {
 		inst.np = args.N
 		reply.Err = OK
 		reply.NA = inst.na
 		reply.VA = inst.va
-		DPrintf("%s ok", prefix)
+		DPrintf("%s ok reply %d: %v", prefix, reply.NA, reply.VA)
 		return nil
 	}
 	DPrintf("%s rejected %d vs %d", prefix, args.N, inst.np)
@@ -96,11 +96,11 @@ func (px *Paxos) Accept(args *AcceptArgs, reply *AcceptReply) error {
 	reply.MaxDone = px.updateMaxDone(args.Caller, args.MaxDone)
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
-	prefix := fmt.Sprintf("accept %d->%d with %d, %d on status %d", args.Caller, px.me, args.Seq, args.N, inst.status)
+	prefix := fmt.Sprintf("accept %d->%d with seq %d, n %d on status %d", args.Caller, px.me, args.Seq, args.N, inst.status)
 	if args.N >= inst.np {
 		inst.np = args.N
 		inst.na = args.N
-		DPrintf("%s accept value %d: %v", prefix, args.Seq, args.V)
+		DPrintf("%s accept value %d: %v->%v", prefix, args.Seq, inst.va, args.V)
 		inst.va = args.V
 		reply.Err = OK
 		DPrintf("%s ok", prefix)
@@ -116,9 +116,9 @@ func (px *Paxos) Decide(args *DecideArgs, reply *DecideReply) error {
 	reply.MaxDone = px.updateMaxDone(args.Caller, args.MaxDone)
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
-	prefix := fmt.Sprintf("decide %d->%d with %v on status %d", args.Caller, px.me, args.Seq, inst.status)
+	prefix := fmt.Sprintf("decide %d->%d with seq %d on status %d", args.Caller, px.me, args.Seq, inst.status)
 	inst.status = Decided
-	DPrintf("%s decide value %d: %v", prefix, args.Seq, args.V)
+	DPrintf("%s decide value %d: %v->%v", prefix, args.Seq, inst.va, args.V)
 	inst.va = args.V
 	DPrintf("%s ok", prefix)
 	reply.Err = OK

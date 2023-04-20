@@ -72,6 +72,11 @@ func (px *Paxos) doPrepare(peers []string, proposalNum int, inst *Instance) (boo
 				// prepare ok for self
 				inst.np = proposalNum
 				count += 1
+				if inst.na > maxNa {
+					DPrintf("doPrepare me %d self bigger na: %d vs %v", px.me, inst.na, inst.va)
+					maxNa = inst.na
+					maxNaV = inst.va
+				}
 			}
 			inst.mu.Unlock()
 		} else {
@@ -87,6 +92,7 @@ func (px *Paxos) doPrepare(peers []string, proposalNum int, inst *Instance) (boo
 				px.updateMaxDone(idx, reply.MaxDone)
 				count += 1
 				if reply.NA > maxNa {
+					DPrintf("doPrepare me %d from %d bigger na: %d vs %v", px.me, idx, inst.na, inst.va)
 					maxNa = reply.NA
 					maxNaV = reply.VA
 				}
@@ -111,7 +117,7 @@ func (px *Paxos) doAccept(peers []string, proposalNum int, value interface{}, in
 				// accept ok for self
 				inst.np = proposalNum
 				inst.na = proposalNum
-				DPrintf("doAccept me %d self accept value %d: %v", px.me, seq, value)
+				DPrintf("doAccept me %d self accept value %d: %v->%v", px.me, seq, inst.va, value)
 				inst.va = value
 				count += 1
 			}
@@ -140,7 +146,10 @@ func (px *Paxos) doDecide(peers []string, value interface{}, inst *Instance) int
 	count := 0
 	for idx, peer := range peers {
 		if idx == px.me {
-			continue
+			inst.mu.Lock()
+			inst.status = Decided
+			inst.va = value
+			inst.mu.Unlock()
 		}
 		args := DecideArgs{
 			MaxDone: px.maxDone[px.me],
@@ -164,7 +173,7 @@ func (px *Paxos) run(peers []string, inst *Instance) {
 		proposalNum := inst.proposalNum
 		ok, na, va := px.doPrepare(peers, proposalNum, inst)
 		if !ok {
-			DPrintf("prepare fail")
+			DPrintf("prepare fail me %d seq %d np %d", px.me, inst.seq, proposalNum)
 			continue
 		}
 
@@ -174,11 +183,11 @@ func (px *Paxos) run(peers []string, inst *Instance) {
 		}
 		rc := px.doAccept(peers, proposalNum, value, inst)
 		if !rc {
-			DPrintf("accept fail")
+			DPrintf("accept fail me %d seq %d np %d", px.me, inst.seq, proposalNum)
 			continue
 		}
 
-		inst.status = Decided
+		// inst.status = Decided
 		ret := px.doDecide(peers, value, inst)
 		DPrintf("decided ok on %d peers", ret+1)
 		break
