@@ -3,8 +3,9 @@ package kvpaxos
 import "hash/fnv"
 
 const (
-	OK       = "OK"
-	ErrNoKey = "ErrNoKey"
+	OK             = "OK"
+	ErrNoKey       = "ErrNoKey"
+	ErrSeqConflict = "ErrSeqConflict"
 )
 
 type Err string

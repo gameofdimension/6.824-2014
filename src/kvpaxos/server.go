@@ -23,12 +23,6 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-}
-
 type KVPaxos struct {
 	mu         sync.Mutex
 	l          net.Listener
@@ -38,17 +32,9 @@ type KVPaxos struct {
 	px         *paxos.Paxos
 
 	// Your definitions here.
-}
-
-func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
-	// Your code here.
-	return nil
-}
-
-func (kv *KVPaxos) Put(args *PutArgs, reply *PutReply) error {
-	// Your code here.
-
-	return nil
+	lastClientSeq    map[int64]int64
+	lastClientResult map[int64]interface{}
+	repo             map[string]string
 }
 
 // tell the server to shut itself down.
