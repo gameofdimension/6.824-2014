@@ -150,6 +150,7 @@ func (px *Paxos) doDecide(peers []string, value interface{}, inst *Instance) int
 			inst.status = Decided
 			inst.va = value
 			inst.mu.Unlock()
+			count += 1
 		}
 		args := DecideArgs{
 			MaxDone: px.maxDone[px.me],
@@ -187,9 +188,8 @@ func (px *Paxos) run(peers []string, inst *Instance) {
 			continue
 		}
 
-		// inst.status = Decided
 		ret := px.doDecide(peers, value, inst)
-		DPrintf("decided ok on %d peers", ret+1)
+		DPrintf("decided ok on %d peers", ret)
 		break
 	}
 }
