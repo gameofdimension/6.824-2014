@@ -89,7 +89,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 	// Your code here.
 	mi := px.Min()
 	if seq < mi {
-		DPrintf("Start seq too small %d vs %d, will ignore", seq, mi)
+		DPrintf("Start me %d seq too small %d vs %d, will ignore", px.me, seq, mi)
 		return
 	}
 	inst := px.findOrCreate(seq, nil, Accepted)
@@ -183,7 +183,7 @@ func (px *Paxos) Status(seq int) (bool, interface{}) {
 	// Your code here.
 	mi := px.Min()
 	if seq < mi {
-		DPrintf("Status seq too small %d vs %d, will ignore", seq, mi)
+		DPrintf("Status me %d seq too small %d vs %d, will ignore", px.me, seq, mi)
 		return false, nil
 	}
 	inst, ok := px.seqToInstance[seq]

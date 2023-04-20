@@ -2,6 +2,7 @@ package kvpaxos
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"net/rpc"
 	"time"
@@ -75,15 +76,19 @@ func (ck *Clerk) Get(key string) string {
 		Seq: ck.seq,
 	}
 	for {
-		for _, server := range ck.servers {
+		for idx, server := range ck.servers {
 			reply := GetReply{}
+			prefix := fmt.Sprintf("get client %d call server %d with %v", ck.me, idx, args)
 			ok := call(server, "KVPaxos.Get", &args, &reply)
 			if ok && reply.Err == OK {
+				DPrintf("%s ok with value %s", prefix, reply.Value)
 				return reply.Value
 			}
 			if ok && reply.Err == ErrNoKey {
+				DPrintf("%s no key", prefix)
 				return ""
 			}
+			DPrintf("%s fail %t, %v", prefix, ok, reply)
 		}
 		time.Sleep(7 * time.Millisecond)
 	}
@@ -102,12 +107,15 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 		Seq:    ck.seq,
 	}
 	for {
-		for _, server := range ck.servers {
+		for idx, server := range ck.servers {
 			reply := PutReply{}
+			prefix := fmt.Sprintf("put client %d call server %d with %v", ck.me, idx, args)
 			ok := call(server, "KVPaxos.Put", &args, &reply)
 			if ok && reply.Err == OK {
+				DPrintf("%s ok", prefix)
 				return reply.PreviousValue
 			}
+			DPrintf("%s fail %t, %v", prefix, ok, reply)
 		}
 		time.Sleep(7 * time.Millisecond)
 	}

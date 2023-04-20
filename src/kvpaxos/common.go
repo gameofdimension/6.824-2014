@@ -4,6 +4,7 @@ import "hash/fnv"
 
 const (
 	OK             = "OK"
+	ErrKilled      = "ErrKilled"
 	ErrNoKey       = "ErrNoKey"
 	ErrSeqConflict = "ErrSeqConflict"
 )
