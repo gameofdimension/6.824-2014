@@ -14,7 +14,7 @@ import (
 	"6.824.2014/paxos"
 )
 
-const Debug = 1
+const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -35,7 +35,7 @@ type KVPaxos struct {
 	lastClientSeq    map[int64]int64
 	lastClientResult map[int64]interface{}
 	repo             map[string]string
-	lastApply        int
+	lastApplied      int
 	lastAgree        int
 }
 
@@ -61,17 +61,18 @@ func StartServer(servers []string, me int) *KVPaxos {
 	kv.me = me
 
 	// Your initialization code here.
-	kv.lastApply = -1
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	kv.lastApplied = -1
 	kv.lastAgree = -1
 	kv.repo = make(map[string]string)
 	kv.lastClientSeq = make(map[int64]int64)
 	kv.lastClientResult = make(map[int64]interface{})
-	go kv.appleyLog()
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(kv)
 
 	kv.px = paxos.Make(servers, me, rpcs)
+	go kv.appleyLog()
 
 	os.Remove(servers[me])
 	l, e := net.Listen("unix", servers[me])

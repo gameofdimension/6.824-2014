@@ -3,20 +3,27 @@ package kvpaxos
 import (
 	"fmt"
 	"strconv"
+	"time"
 )
 
 func (kv *KVPaxos) appleyLog() {
 	for !kv.dead {
-		for i := kv.lastApply + 1; i <= kv.lastAgree; i += 1 {
-			prefix := fmt.Sprintf("apply log me %d apply range [%d vs %d] at %d", kv.me, kv.lastApply, kv.lastAgree, i)
+		max := kv.px.Max()
+		for i := kv.lastApplied + 1; i <= max; i += 1 {
+			prefix := fmt.Sprintf("apply log me %d apply range [%d vs %d] at %d", kv.me, kv.lastApplied, max, i)
 			DPrintf("%s started", prefix)
 			decided, val := kv.px.Status(i)
 			if !decided {
-				DPrintf("%s not decided try fill gap", prefix)
-				kv.fillGap(i)
-				decided, val = kv.px.Status(i)
-				if !decided {
-					panic(fmt.Sprintf("seq %d not decided after fill gap", i))
+				if i < max {
+					DPrintf("%s not decided try fill gap", prefix)
+					kv.fillGap(i)
+					decided, val = kv.px.Status(i)
+					if !decided {
+						panic(fmt.Sprintf("seq %d not decided after fill gap", i))
+					}
+				} else {
+					time.Sleep(1 * time.Millisecond)
+					continue
 				}
 			}
 			kv.mu.Lock()
@@ -38,7 +45,7 @@ func (kv *KVPaxos) appleyLog() {
 					} else {
 						kv.lastClientResult[op.ClientId] = true
 					}
-					DPrintf("%s put log of key %s: %s->%s", prefix, key, kv.repo[key], value)
+					DPrintf("%s put log of key %s: %d->%d", prefix, key, len(kv.repo[key]), len(value))
 					kv.repo[key] = value
 				} else if op.Type == OpGet {
 					key := op.Key
@@ -48,14 +55,15 @@ func (kv *KVPaxos) appleyLog() {
 					} else {
 						kv.lastClientResult[op.ClientId] = nil
 					}
-					DPrintf("%s get log of key %s: %s", prefix, key, kv.repo[key])
+					DPrintf("%s get log of key %s: %d", prefix, key, len(kv.repo[key]))
 				}
 			}
-			kv.lastApply = i
+			kv.lastApplied = i
 			kv.mu.Unlock()
 			kv.px.Done(i)
 			min := kv.px.Min()
 			DPrintf("%s done %d min %d", prefix, i, min)
 		}
+		time.Sleep(1 * time.Millisecond)
 	}
 }

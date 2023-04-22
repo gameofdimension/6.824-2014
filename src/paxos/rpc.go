@@ -83,7 +83,7 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 		reply.Err = OK
 		reply.NA = inst.na
 		reply.VA = inst.va
-		DPrintf("%s ok reply %d: %v", prefix, reply.NA, reply.VA)
+		DPrintf("%s ok reply %d", prefix, reply.NA)
 		return nil
 	}
 	DPrintf("%s rejected %d vs %d", prefix, args.N, inst.np)
@@ -100,7 +100,7 @@ func (px *Paxos) Accept(args *AcceptArgs, reply *AcceptReply) error {
 	if args.N >= inst.np {
 		inst.np = args.N
 		inst.na = args.N
-		DPrintf("%s accept value %d: %v->%v", prefix, args.Seq, inst.va, args.V)
+		DPrintf("%s accept value at seq %d", prefix, args.Seq)
 		inst.va = args.V
 		reply.Err = OK
 		DPrintf("%s ok", prefix)
@@ -118,7 +118,7 @@ func (px *Paxos) Decide(args *DecideArgs, reply *DecideReply) error {
 	defer inst.mu.Unlock()
 	prefix := fmt.Sprintf("decide %d->%d with seq %d on status %d", args.Caller, px.me, args.Seq, inst.status)
 	inst.status = Decided
-	DPrintf("%s decide value %d: %v->%v", prefix, args.Seq, inst.va, args.V)
+	DPrintf("%s decide value at seq %d", prefix, args.Seq)
 	inst.va = args.V
 	DPrintf("%s ok", prefix)
 	reply.Err = OK

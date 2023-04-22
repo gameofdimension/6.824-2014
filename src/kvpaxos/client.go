@@ -81,7 +81,7 @@ func (ck *Clerk) Get(key string) string {
 			prefix := fmt.Sprintf("get client %d call server %d with %v", ck.me, idx, args)
 			ok := call(server, "KVPaxos.Get", &args, &reply)
 			if ok && reply.Err == OK {
-				DPrintf("%s ok with value %s", prefix, reply.Value)
+				DPrintf("%s ok with value %d", prefix, len(reply.Value))
 				return reply.Value
 			}
 			if ok && reply.Err == ErrNoKey {
@@ -109,7 +109,9 @@ func (ck *Clerk) PutExt(key string, value string, dohash bool) string {
 	for {
 		for idx, server := range ck.servers {
 			reply := PutReply{}
-			prefix := fmt.Sprintf("put client %d call server %d with %v", ck.me, idx, args)
+			copy := args
+			copy.Value = "*masked*"
+			prefix := fmt.Sprintf("put client %d call server %d with %v", ck.me, idx, copy)
 			ok := call(server, "KVPaxos.Put", &args, &reply)
 			if ok && reply.Err == OK {
 				DPrintf("%s ok", prefix)

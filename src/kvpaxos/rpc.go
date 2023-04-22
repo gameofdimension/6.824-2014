@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+// 两个重要参考文献
+// http://css.csail.mit.edu/6.824/2014/labs/lab-3.html
+// http://css.csail.mit.edu/6.824/2014/notes/l08-epaxos.txt
+
 const (
 	OpNoop = 0
 	OpGet  = 1
@@ -58,28 +62,18 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	}
 	DPrintf("%s start paxos %d", prefix, instance)
 	kv.px.Start(instance, op)
-	rc := kv.pollPaxos(instance, op)
-	if !rc {
-		DPrintf("%s reach agreement at %d fail", prefix, instance)
-		reply.Err = ErrSeqConflict
-		return nil
-	}
-	DPrintf("%s reach agreement at %d succeed", prefix, instance)
-	kv.mu.Lock()
-	if instance > kv.lastAgree {
-		kv.lastAgree = instance
-	}
-	kv.mu.Unlock()
 
 	for !kv.dead {
 		kv.mu.Lock()
-		if kv.lastApply < instance {
-			time.Sleep(3 * time.Millisecond)
+		if kv.lastApplied < instance {
 			kv.mu.Unlock()
+			time.Sleep(3 * time.Millisecond)
 			continue
 		}
 		if lastSeq, ok := kv.lastClientSeq[clientId]; !ok || lastSeq != clientSeq {
-			panic(fmt.Sprintf("get handler me %d client %d expected %d got %d", kv.me, clientId, clientSeq, lastSeq))
+			reply.Err = ErrSeqConflict
+			kv.mu.Unlock()
+			return nil
 		}
 		cached := kv.lastClientResult[clientId]
 		if cached == nil {
@@ -100,7 +94,9 @@ func (kv *KVPaxos) Put(args *PutArgs, reply *PutReply) error {
 	clientId := args.Id
 	clientSeq := args.Seq
 	kv.mu.Lock()
-	prefix := fmt.Sprintf("put handler me %d from client %d with args %v", kv.me, args.Id, *args)
+	copy := *args
+	copy.Value = "*masked*"
+	prefix := fmt.Sprintf("put handler me %d from client %d with args %v", kv.me, args.Id, copy)
 	if lastSeq, ok := kv.lastClientSeq[clientId]; ok {
 		if clientSeq < lastSeq {
 			panic(fmt.Sprintf("%s seq out of order %d vs %d", prefix, clientSeq, lastSeq))
@@ -125,28 +121,20 @@ func (kv *KVPaxos) Put(args *PutArgs, reply *PutReply) error {
 		Value:     args.Value,
 		DoHash:    args.DoHash,
 	}
-	DPrintf("%s start paxos %d", prefix, instance)
 	kv.px.Start(instance, op)
-	rc := kv.pollPaxos(instance, op)
-	if !rc {
-		reply.Err = ErrSeqConflict
-		return nil
-	}
-	kv.mu.Lock()
-	if instance > kv.lastAgree {
-		kv.lastAgree = instance
-	}
-	kv.mu.Unlock()
+	DPrintf("%s start paxos %d", prefix, instance)
 
 	for !kv.dead {
 		kv.mu.Lock()
-		if kv.lastApply < instance {
-			time.Sleep(3 * time.Millisecond)
+		if kv.lastApplied < instance {
 			kv.mu.Unlock()
+			time.Sleep(3 * time.Millisecond)
 			continue
 		}
 		if lastSeq, ok := kv.lastClientSeq[clientId]; !ok || lastSeq != clientSeq {
-			panic(fmt.Sprintf("put handler me %d client %d expected %d got %d", kv.me, clientId, clientSeq, lastSeq))
+			reply.Err = ErrSeqConflict
+			kv.mu.Unlock()
+			return nil
 		}
 		reply.Err = OK
 		if args.DoHash {
@@ -159,16 +147,19 @@ func (kv *KVPaxos) Put(args *PutArgs, reply *PutReply) error {
 	return nil
 }
 
-func (kv *KVPaxos) pollPaxos(instance int, targetOp Op) bool {
+func (kv *KVPaxos) pollPaxos(instance int, targetOp Op) (bool, *Op) {
 	to := 10 * time.Millisecond
 	for !kv.dead {
 		decided, value := kv.px.Status(instance)
+		copy := targetOp
+		copy.Value = "*masked*"
+		DPrintf("me %d poll status of %d expected %v", kv.me, instance, copy)
 		if decided {
 			agreement := value.(Op)
 			if agreement == targetOp {
-				return true
+				return true, &agreement
 			} else {
-				return false
+				return false, &agreement
 			}
 		}
 		time.Sleep(to)
@@ -176,7 +167,7 @@ func (kv *KVPaxos) pollPaxos(instance int, targetOp Op) bool {
 			to *= 2
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (kv *KVPaxos) fillGap(seq int) {
@@ -184,6 +175,9 @@ func (kv *KVPaxos) fillGap(seq int) {
 		Type: OpNoop,
 	}
 	kv.px.Start(seq, op)
-	ok := kv.pollPaxos(seq, op)
-	DPrintf("me %d try agree seq %d with noop, result %t", kv.me, seq, ok)
+	DPrintf("me %d fill gap seq %d with noop started", kv.me, seq)
+	ok, actual := kv.pollPaxos(seq, op)
+	copy := actual
+	copy.Value = "*masked*"
+	DPrintf("me %d fill gap seq %d with noop result %t, %v", kv.me, seq, ok, copy)
 }

@@ -96,11 +96,11 @@ func (px *Paxos) Start(seq int, v interface{}) {
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 	if inst.status == Decided {
-		DPrintf("already decided %d", seq)
+		DPrintf("Start me %d already decided seq %d", px.me, seq)
 		return
 	}
 	if inst.status == Running {
-		DPrintf("running agreement %d", seq)
+		DPrintf("Start me %d running agreement seq %d", px.me, seq)
 		return
 	}
 	inst.status = Running
@@ -114,6 +114,8 @@ func (px *Paxos) Start(seq int, v interface{}) {
 // see the comments for Min() for more explanation.
 func (px *Paxos) Done(seq int) {
 	// Your code here.
+	px.mu.Lock()
+	defer px.mu.Unlock()
 	if seq > px.maxDone[px.me] {
 		px.maxDone[px.me] = seq
 	}
@@ -212,6 +214,7 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
 	px.me = me
 
 	// Your initialization code here.
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	px.seqToInstance = make(map[int]*Instance)
 	px.maxDone = make(map[int]int)
 	for idx := range peers {

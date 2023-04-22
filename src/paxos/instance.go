@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-const Debug = 1
+const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -73,26 +73,28 @@ func (px *Paxos) doPrepare(peers []string, proposalNum int, inst *Instance) (boo
 				inst.np = proposalNum
 				count += 1
 				if inst.na > maxNa {
-					DPrintf("doPrepare me %d self bigger na: %d vs %v", px.me, inst.na, inst.va)
+					DPrintf("doPrepare me %d self bigger na: %d vs %d", px.me, inst.na, maxNa)
 					maxNa = inst.na
 					maxNaV = inst.va
 				}
 			}
 			inst.mu.Unlock()
 		} else {
+			px.mu.Lock()
 			args := PrepareArgs{
 				MaxDone: px.maxDone[px.me],
 				Caller:  px.me,
 				Seq:     seq,
 				N:       proposalNum,
 			}
+			px.mu.Unlock()
 			reply := PrepareReply{}
 			ok := call(peer, "Paxos.Prepare", &args, &reply)
 			if ok && reply.Err == OK {
 				px.updateMaxDone(idx, reply.MaxDone)
 				count += 1
 				if reply.NA > maxNa {
-					DPrintf("doPrepare me %d from %d bigger na: %d vs %v", px.me, idx, inst.na, inst.va)
+					DPrintf("doPrepare me %d from %d bigger na: %d vs %d", px.me, idx, reply.NA, maxNa)
 					maxNa = reply.NA
 					maxNaV = reply.VA
 				}
@@ -117,12 +119,13 @@ func (px *Paxos) doAccept(peers []string, proposalNum int, value interface{}, in
 				// accept ok for self
 				inst.np = proposalNum
 				inst.na = proposalNum
-				DPrintf("doAccept me %d self accept value %d: %v->%v", px.me, seq, inst.va, value)
+				DPrintf("doAccept me %d self accept value at seq %d", px.me, seq)
 				inst.va = value
 				count += 1
 			}
 			inst.mu.Unlock()
 		} else {
+			px.mu.Lock()
 			args := AcceptArgs{
 				MaxDone: px.maxDone[px.me],
 				Caller:  px.me,
@@ -130,6 +133,7 @@ func (px *Paxos) doAccept(peers []string, proposalNum int, value interface{}, in
 				N:       proposalNum,
 				V:       value,
 			}
+			px.mu.Unlock()
 			reply := AcceptReply{}
 			ok := call(peer, "Paxos.Accept", &args, &reply)
 			if ok && reply.Err == OK {
@@ -152,12 +156,14 @@ func (px *Paxos) doDecide(peers []string, value interface{}, inst *Instance) int
 			inst.mu.Unlock()
 			count += 1
 		}
+		px.mu.Lock()
 		args := DecideArgs{
 			MaxDone: px.maxDone[px.me],
 			Caller:  px.me,
 			Seq:     seq,
 			V:       value,
 		}
+		px.mu.Unlock()
 		reply := DecideReply{}
 		ok := call(peer, "Paxos.Decide", &args, &reply)
 		if ok && reply.Err == OK {
