@@ -178,6 +178,8 @@ func (kv *KVPaxos) fillGap(seq int) {
 	DPrintf("me %d fill gap seq %d with noop started", kv.me, seq)
 	ok, actual := kv.pollPaxos(seq, op)
 	copy := actual
-	copy.Value = "*masked*"
+	if copy != nil {
+		copy.Value = "*masked*"
+	}
 	DPrintf("me %d fill gap seq %d with noop result %t, %v", kv.me, seq, ok, copy)
 }
