@@ -22,6 +22,8 @@ func (kv *KVPaxos) appleyLog() {
 						panic(fmt.Sprintf("seq %d not decided after fill gap", i))
 					}
 				} else {
+					// i==max 的情况下提前返回非常重要，因为要补的是中间的洞，而处在日志尾巴的洞不能认为是洞，而可能是
+					// 正在形成共识的新操作
 					time.Sleep(1 * time.Millisecond)
 					continue
 				}
