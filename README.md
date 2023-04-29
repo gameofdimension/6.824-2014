@@ -8,5 +8,5 @@ paxos lab of mit 6.824, year 2014
 - [x] 2d
 - [x] 3a
 - [x] 3b
-- [ ] 4a
+- [x] 4a
 - [ ] 4b
