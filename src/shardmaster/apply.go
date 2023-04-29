@@ -3,6 +3,7 @@ package shardmaster
 import (
 	"fmt"
 	"log"
+	"sort"
 	"time"
 )
 
@@ -156,6 +157,9 @@ func (sc *ShardMaster) makeConfigForJoin(args *JoinArgs) *Config {
 	for k := range groups {
 		finalGids = append(finalGids, int64(k))
 	}
+	sort.Slice(finalGids, func(i, j int) bool {
+		return finalGids[i] < finalGids[j]
+	})
 
 	shards := add(last.Shards[:], finalGids)
 	config := Config{
@@ -177,6 +181,10 @@ func (sc *ShardMaster) makeConfigForLeave(args *LeaveArgs) *Config {
 			finalGids = append(finalGids, int64(k))
 		}
 	}
+	sort.Slice(finalGids, func(i, j int) bool {
+		return finalGids[i] < finalGids[j]
+	})
+	
 	shards := remove(last.Shards[:], finalGids)
 	config := Config{
 		Num:    version,
