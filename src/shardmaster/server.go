@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"net/rpc"
@@ -22,12 +23,15 @@ type ShardMaster struct {
 	unreliable bool // for testing
 	px         *paxos.Paxos
 
-	configs []Config // indexed by config num
+	configs         []Config // indexed by config num
+	lastApplied     int
+	pendingInstance map[int]bool
 }
 
 type OpType int
 
 const (
+	OpNoop  = 0
 	OpQuery = 1
 	OpJoin  = 2
 	OpLeave = 3
@@ -36,33 +40,128 @@ const (
 
 type Op struct {
 	// Your data here.
-	Type     OpType
-	Args     interface{}
-	ClientId int64
-	Seq      int64
+	Type OpType
+	Args interface{}
+}
+
+func (sm *ShardMaster) minPendingInstance() int {
+	res := math.MaxInt32
+	for k := range sm.pendingInstance {
+		if k < res {
+			res = k
+		}
+	}
+	return res
+}
+
+func (sm *ShardMaster) clearPendingInstance(instance int) {
+	DPrintf("server %d clear instance %d", sm.me, instance)
+	sm.mu.Lock()
+	delete(sm.pendingInstance, instance)
+	sm.mu.Unlock()
 }
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {
 	// Your code here.
+	prefix := fmt.Sprintf("server %d join %v", sm.me, args)
+	DPrintf("%s start", prefix)
 
+	op := Op{
+		Type: OpJoin,
+		Args: *args,
+	}
+	sm.mu.Lock()
+	instance := sm.px.Max() + 1
+	sm.pendingInstance[instance] = true
+	sm.mu.Unlock()
+	defer sm.clearPendingInstance(instance)
+	sm.px.Start(instance, op)
+	DPrintf("%s start paxos %d", prefix, instance)
+	ok, actual := sm.pollPaxos(instance, &op)
+	DPrintf("%s return %t, %v vs %v", prefix, ok, op, *actual)
+	if !ok {
+		return fmt.Errorf("%s agreement fail", prefix)
+	}
 	return nil
 }
 
 func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) error {
 	// Your code here.
+	prefix := fmt.Sprintf("server %d leave %v", sm.me, args)
+	DPrintf("%s start", prefix)
 
+	op := Op{
+		Type: OpLeave,
+		Args: *args,
+	}
+	sm.mu.Lock()
+	instance := sm.px.Max() + 1
+	sm.pendingInstance[instance] = true
+	sm.mu.Unlock()
+	defer sm.clearPendingInstance(instance)
+	sm.px.Start(instance, op)
+	DPrintf("%s start paxos %d", prefix, instance)
+	ok, actual := sm.pollPaxos(instance, &op)
+	DPrintf("%s return %t, %v vs %v", prefix, ok, op, *actual)
+	if !ok {
+		return fmt.Errorf("%s agreement fail", prefix)
+	}
 	return nil
 }
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) error {
 	// Your code here.
+	prefix := fmt.Sprintf("server %d move %v", sm.me, args)
+	DPrintf("%s start", prefix)
 
+	op := Op{
+		Type: OpMove,
+		Args: *args,
+	}
+	sm.mu.Lock()
+	instance := sm.px.Max() + 1
+	sm.pendingInstance[instance] = true
+	sm.mu.Unlock()
+	defer sm.clearPendingInstance(instance)
+	sm.px.Start(instance, op)
+	DPrintf("%s start paxos %d", prefix, instance)
+	ok, actual := sm.pollPaxos(instance, &op)
+	DPrintf("%s return %t, %v vs %v", prefix, ok, op, *actual)
+	if !ok {
+		return fmt.Errorf("%s agreement fail", prefix)
+	}
 	return nil
 }
 
 func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	// Your code here.
 
+	prefix := fmt.Sprintf("server %d query %v", sm.me, args)
+	DPrintf("%s start", prefix)
+
+	op := Op{
+		Type: OpQuery,
+		Args: *args,
+	}
+	sm.mu.Lock()
+	instance := sm.px.Max() + 1
+	sm.pendingInstance[instance] = true
+	sm.mu.Unlock()
+	defer sm.clearPendingInstance(instance)
+	sm.px.Start(instance, op)
+	DPrintf("%s start paxos %d", prefix, instance)
+	ok, actual := sm.pollPaxos(instance, &op)
+	DPrintf("%s return %t, %v vs %v", prefix, ok, op, *actual)
+	if !ok {
+		return fmt.Errorf("%s agreement fail", prefix)
+	}
+	sm.mu.Lock()
+	version := args.Num
+	if version < 0 || version >= len(sm.configs) {
+		version = len(sm.configs) - 1
+	}
+	reply.Config = sm.configs[version]
+	sm.mu.Unlock()
 	return nil
 }
 
@@ -79,6 +178,14 @@ func (sm *ShardMaster) Kill() {
 // me is the index of the current server in servers[].
 func StartServer(servers []string, me int) *ShardMaster {
 	gob.Register(Op{})
+	gob.Register(JoinArgs{})
+	gob.Register(JoinReply{})
+	gob.Register(LeaveArgs{})
+	gob.Register(LeaveReply{})
+	gob.Register(MoveArgs{})
+	gob.Register(MoveReply{})
+	gob.Register(QueryArgs{})
+	gob.Register(QueryReply{})
 
 	sm := new(ShardMaster)
 	sm.me = me
@@ -97,6 +204,8 @@ func StartServer(servers []string, me int) *ShardMaster {
 		log.Fatal("listen error: ", e)
 	}
 	sm.l = l
+
+	sm.pendingInstance = make(map[int]bool)
 
 	// please do not change any of the following code,
 	// or do anything to subvert it.

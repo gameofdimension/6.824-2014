@@ -3,8 +3,8 @@ package shardmaster
 import "testing"
 
 func TestAdd(t *testing.T) {
-	shards := []int{4, 1, 1, 1, 2, 2, 2, 2, 2, 2}
-	newShards := add(shards, []int{1, 2, 3, 4})
+	shards := []int64{4, 1, 1, 1, 2, 2, 2, 2, 2, 2}
+	newShards := add(shards, []int64{1, 2, 3, 4})
 	if len(newShards) != len(shards) {
 		t.Fatalf("wrong %v", newShards)
 	}
@@ -32,8 +32,8 @@ func TestAdd(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	shards := []int{4, 1, 1, 2, 2, 2, 3, 3, 3, 3}
-	newShards := remove(shards, []int{1, 3, 4})
+	shards := []int64{4, 1, 1, 2, 2, 2, 3, 3, 3, 3}
+	newShards := remove(shards, []int64{1, 3, 4})
 
 	for _, k := range []int{0, 1, 2, 6, 7, 8, 9} {
 		if newShards[k] != shards[k] {
@@ -66,8 +66,8 @@ func TestRemove(t *testing.T) {
 }
 
 func TestDebug(t *testing.T) {
-	shards := []int{1, 1, 1, 1, 1, 2, 2, 2, 2, 2}
-	newShards := remove(shards, []int{2})
+	shards := []int64{1, 1, 1, 1, 1, 2, 2, 2, 2, 2}
+	newShards := remove(shards, []int64{2})
 	for _, v := range newShards {
 		if v != 2 {
 			t.Fatalf("expect %d vs %d", v, 2)

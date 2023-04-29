@@ -36,7 +36,6 @@ type KVPaxos struct {
 	lastClientResult map[int64]interface{}
 	repo             map[string]string
 	lastApplied      int
-	lastAgree        int
 }
 
 // tell the server to shut itself down.
@@ -63,7 +62,6 @@ func StartServer(servers []string, me int) *KVPaxos {
 	// Your initialization code here.
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	kv.lastApplied = -1
-	kv.lastAgree = -1
 	kv.repo = make(map[string]string)
 	kv.lastClientSeq = make(map[int64]int64)
 	kv.lastClientResult = make(map[int64]interface{})

@@ -6,8 +6,8 @@ import (
 )
 
 type Pair struct {
-	Key   int
-	Value []int
+	Key   int64
+	Value []int64
 }
 
 type PairList []Pair
@@ -21,7 +21,7 @@ func (p PairList) Less(i, j int) bool {
 }
 func (p PairList) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
 
-func add(shards []int, gids []int) []int {
+func add(shards []int64, gids []int64) []int64 {
 	count0 := 0
 	for _, v := range shards {
 		if v == 0 {
@@ -36,33 +36,33 @@ func add(shards []int, gids []int) []int {
 		oldCount = make(PairList, 0)
 	}
 
-	disjoint := make([]int, 0)
+	disjoint := make([]int64, 0)
 	for _, v := range gids {
 		if !SliceContains(shards, v) {
 			disjoint = append(disjoint, v)
 		}
 	}
-	pool := []int{}
+	pool := []int64{}
 	if oldCount.Len() == 0 {
 		for i := 0; i < NShards; i += 1 {
-			pool = append(pool, i)
+			pool = append(pool, int64(i))
 		}
 	}
 	return assign(oldCount, disjoint, pool)
 }
 
-func assign(used PairList, notUsed []int, pool []int) []int {
+func assign(used PairList, notUsed []int64, pool []int64) []int64 {
 	if len(used) > NShards {
 		panic(fmt.Sprintf("group count %d bigger than %d", len(used), NShards))
 	}
-	shards := make([]int, 0)
+	shards := make([]int64, 0)
 	for _, pair := range used {
 		shards = append(shards, pair.Key)
 	}
 	if len(used) == NShards {
 		return shards
 	}
-	var gids []int
+	var gids []int64
 	if len(notUsed)+used.Len() <= NShards {
 		gids = notUsed
 	} else {
@@ -70,7 +70,7 @@ func assign(used PairList, notUsed []int, pool []int) []int {
 	}
 	gn := used.Len() + len(gids)
 	if gn == 0 {
-		return make([]int, NShards)
+		return make([]int64, NShards)
 	}
 	avg := NShards / gn
 	rmd := NShards % gn
@@ -99,7 +99,7 @@ func assign(used PairList, notUsed []int, pool []int) []int {
 		panic(fmt.Sprintf("not balance %v", pool))
 	}
 
-	newShards := make([]int, NShards)
+	newShards := make([]int64, NShards)
 	for i := range newCount {
 		gid := newCount[i].Key
 		for _, v := range newCount[i].Value {
@@ -109,17 +109,17 @@ func assign(used PairList, notUsed []int, pool []int) []int {
 	return newShards
 }
 
-func remove(shards []int, gids []int) []int {
+func remove(shards []int64, gids []int64) []int64 {
 	oldCount := sortByShards(shards)
-	diff := make([]int, 0)
+	diff := make([]int64, 0)
 	for _, pair := range oldCount {
 		if !SliceContains(gids, pair.Key) {
 			diff = append(diff, pair.Key)
 		}
 	}
 	newCount := make(PairList, 0)
-	inUse := make([]int, 0)
-	pool := make([]int, 0)
+	inUse := make([]int64, 0)
+	pool := make([]int64, 0)
 	for i := 0; i < len(oldCount); i += 1 {
 		if SliceContains(diff, oldCount[i].Key) {
 			pool = append(pool, oldCount[i].Value...)
@@ -128,7 +128,7 @@ func remove(shards []int, gids []int) []int {
 			inUse = append(inUse, oldCount[i].Key)
 		}
 	}
-	notUsed := make([]int, 0)
+	notUsed := make([]int64, 0)
 	for _, v := range gids {
 		if !SliceContains(inUse, v) {
 			notUsed = append(notUsed, v)
@@ -137,10 +137,10 @@ func remove(shards []int, gids []int) []int {
 	return assign(newCount, notUsed, pool)
 }
 
-func sortByShards(shards []int) PairList {
-	gidShards := make(map[int][]int)
+func sortByShards(shards []int64) PairList {
+	gidShards := make(map[int64][]int64)
 	for s, v := range shards {
-		gidShards[v] = append(gidShards[v], s)
+		gidShards[v] = append(gidShards[v], int64(s))
 	}
 
 	i := 0
@@ -153,7 +153,7 @@ func sortByShards(shards []int) PairList {
 	return pl
 }
 
-func SliceContains(hs []int, n int) bool {
+func SliceContains(hs []int64, n int64) bool {
 	for _, v := range hs {
 		if v == n {
 			return true
@@ -162,11 +162,11 @@ func SliceContains(hs []int, n int) bool {
 	return false
 }
 
-func SliceToArr(shards []int) [NShards]int {
+func SliceToArr(shards []int64) [NShards]int64 {
 	if len(shards) != NShards {
 		panic(fmt.Sprintf("shard len error %d vs %d", len(shards), NShards))
 	}
-	var arr [NShards]int
+	var arr [NShards]int64
 	for i, v := range shards {
 		arr[i] = v
 	}
