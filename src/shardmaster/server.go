@@ -25,8 +25,21 @@ type ShardMaster struct {
 	configs []Config // indexed by config num
 }
 
+type OpType int
+
+const (
+	OpQuery = 1
+	OpJoin  = 2
+	OpLeave = 3
+	OpMove  = 4
+)
+
 type Op struct {
 	// Your data here.
+	Type     OpType
+	Args     interface{}
+	ClientId int64
+	Seq      int64
 }
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) error {

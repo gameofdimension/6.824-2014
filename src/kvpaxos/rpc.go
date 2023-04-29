@@ -64,29 +64,40 @@ func (kv *KVPaxos) Get(args *GetArgs, reply *GetReply) error {
 	kv.px.Start(instance, op)
 
 	for !kv.dead {
-		kv.mu.Lock()
-		if kv.lastApplied < instance {
-			kv.mu.Unlock()
+		stop, success := kv.pollAgreement(instance, clientId, clientSeq)
+		if !stop {
 			time.Sleep(3 * time.Millisecond)
 			continue
 		}
-		if lastSeq, ok := kv.lastClientSeq[clientId]; !ok || lastSeq != clientSeq {
+		if !success {
 			reply.Err = ErrSeqConflict
-			kv.mu.Unlock()
-			return nil
-		}
-		cached := kv.lastClientResult[clientId]
-		if cached == nil {
-			reply.Err = ErrNoKey
 		} else {
-			reply.Err = OK
-			reply.Value = cached.(string)
+			kv.mu.Lock()
+			cached := kv.lastClientResult[clientId]
+			kv.mu.Unlock()
+			if cached == nil {
+				reply.Err = ErrNoKey
+			} else {
+				reply.Err = OK
+				reply.Value = cached.(string)
+			}
 		}
-		kv.mu.Unlock()
 		return nil
 	}
 	reply.Err = ErrKilled
 	return nil
+}
+
+func (kv *KVPaxos) pollAgreement(instance int, clientId int64, clientSeq int64) (bool, bool) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if kv.lastApplied < instance {
+		return false, false
+	}
+	if lastSeq, ok := kv.lastClientSeq[clientId]; !ok || lastSeq != clientSeq {
+		return true, false
+	}
+	return true, true
 }
 
 func (kv *KVPaxos) Put(args *PutArgs, reply *PutReply) error {
@@ -125,22 +136,21 @@ func (kv *KVPaxos) Put(args *PutArgs, reply *PutReply) error {
 	DPrintf("%s start paxos %d", prefix, instance)
 
 	for !kv.dead {
-		kv.mu.Lock()
-		if kv.lastApplied < instance {
-			kv.mu.Unlock()
+		stop, success := kv.pollAgreement(instance, clientId, clientSeq)
+		if !stop {
 			time.Sleep(3 * time.Millisecond)
 			continue
 		}
-		if lastSeq, ok := kv.lastClientSeq[clientId]; !ok || lastSeq != clientSeq {
+		if !success {
 			reply.Err = ErrSeqConflict
-			kv.mu.Unlock()
-			return nil
+		} else {
+			reply.Err = OK
+			if args.DoHash {
+				kv.mu.Lock()
+				reply.PreviousValue = kv.lastClientResult[clientId].(string)
+				kv.mu.Unlock()
+			}
 		}
-		reply.Err = OK
-		if args.DoHash {
-			reply.PreviousValue = kv.lastClientResult[clientId].(string)
-		}
-		kv.mu.Unlock()
 		return nil
 	}
 	reply.Err = ErrKilled
