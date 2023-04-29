@@ -155,6 +155,7 @@ func (px *Paxos) doDecide(peers []string, value interface{}, inst *Instance) int
 			inst.va = value
 			inst.mu.Unlock()
 			count += 1
+			continue
 		}
 		px.mu.Lock()
 		args := DecideArgs{

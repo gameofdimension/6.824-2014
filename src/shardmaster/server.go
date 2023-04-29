@@ -11,6 +11,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"6.824.2014/paxos"
 )
@@ -155,13 +156,20 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) error {
 	if !ok {
 		return fmt.Errorf("%s agreement fail", prefix)
 	}
-	sm.mu.Lock()
-	version := args.Num
-	if version < 0 || version >= len(sm.configs) {
-		version = len(sm.configs) - 1
+	for !sm.dead {
+		if sm.lastApplied < instance {
+			time.Sleep(3 * time.Millisecond)
+			continue
+		}
+		sm.mu.Lock()
+		version := args.Num
+		if version < 0 || version >= len(sm.configs) {
+			version = len(sm.configs) - 1
+		}
+		reply.Config = sm.configs[version]
+		sm.mu.Unlock()
+		break
 	}
-	reply.Config = sm.configs[version]
-	sm.mu.Unlock()
 	return nil
 }
 
@@ -205,7 +213,10 @@ func StartServer(servers []string, me int) *ShardMaster {
 	}
 	sm.l = l
 
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	sm.lastApplied = -1
 	sm.pendingInstance = make(map[int]bool)
+	go sm.appleyLog()
 
 	// please do not change any of the following code,
 	// or do anything to subvert it.
